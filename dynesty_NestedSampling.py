@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from multiprocessing import Pool
 from scipy.interpolate import interp1d
 from scipy.stats import norm, truncnorm
+from sklearn.mixture import GaussianMixture
 
 from orbit_evolution_potential import run
 
@@ -70,7 +71,7 @@ def prior_transform(utheta):
     y_vel_min, y_vel_max = 75, 125
     z_vel_min, z_vel_max = 75, 125
 
-    t_end_min, t_end_max = 0.5, 1.5
+    t_end_min, t_end_max = 1, 2
 
     alpha_mu, alpha_sigma = 0, 1
     beta_mu, beta_sigma = 0, 1
@@ -334,6 +335,55 @@ def log_likelihood_prob(params, dict_data):
 
     return log_likelihood    
 
+def log_likelihood_GMM(params, dict_data):
+
+    # Unpack the data
+    clean_data  = dict_data['clean_data']
+    dirty_data  = dict_data['dirty_data']
+    sigma = dict_data['sigma']
+
+    # Generate model predictions for the given parameters
+    model_data = model(params)
+
+    # Probability of CDF
+    x_model_data = model_data[0]
+    y_model_data = model_data[1]
+
+    # Define means and covariances for GMM
+    means = np.concatenate( (x_model_data[:, None], y_model_data[:, None]), axis=1)
+
+    dim = 2
+    covariances = np.zeros((len(means), dim,dim)) + np.identity(dim)
+    covariances[:,0,0] = sigma
+    covariances[:,1,1] = sigma
+
+    # Define mixing coefficients (weights)
+    weights = np.zeros(len(means)) + 1/len(means)  # Replace with actual values
+
+    # Ensure that weights sum to 1
+    weights /= weights.sum()
+
+    # Create Gaussian Mixture Model
+    gmm = GaussianMixture(n_components=len(means), covariance_type='full')
+    gmm.weights_ = weights
+    gmm.means_ = means
+    gmm.covariances_ = covariances
+    gmm.precisions_cholesky_ = np.linalg.cholesky(np.linalg.inv(covariances))
+
+    # Points to evaluate (as an array of [x, y])
+    points = np.concatenate( (dirty_data[0, :, None], dirty_data[1, :, None]), axis=1)
+
+    # Compute the probability density at these points
+    probabilities = np.exp(gmm.score_samples(points))
+
+    # Log likelihood
+    if np.where(probabilities <= 1e-300)[0].size != 0:
+        log_likelihood = -np.inf
+    else:
+        log_likelihood = np.sum(np.log(probabilities))
+
+    return log_likelihood
+
 
 if __name__ == "__main__":
 
@@ -346,12 +396,12 @@ if __name__ == "__main__":
     pool = Pool(nworkers)
 
     ndim    = 16  # Number of dimensions (parameters)
-    sampler = dynesty.NestedSampler(log_likelihood_prob, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
+    sampler = dynesty.NestedSampler(log_likelihood_GMM, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
 
     sampler.run_nested()
     pool.close()
     pool.join()
 
     results = sampler.results
-    with open('./dynesty_results_Nt100_prob_punishLength.pkl', 'wb') as file:
+    with open('./dynesty_results_N100_GMM.pkl', 'wb') as file:
         pickle.dump(results, file)
