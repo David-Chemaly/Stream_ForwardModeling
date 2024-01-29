@@ -331,7 +331,7 @@ def log_likelihood_prob(params, dict_data):
     if np.where(x_prob == 0)[0].size != 0 or np.where(x_prob == 0)[0].size != 0:
         log_likelihood = -np.inf
     else:
-        log_likelihood = np.sum(np.log(x_prob) + np.log(y_prob))# - length
+        log_likelihood = np.sum(np.log(x_prob) + np.log(y_prob)) - length
 
     return log_likelihood    
 
@@ -376,11 +376,11 @@ def log_likelihood_GMM(params, dict_data):
     # Compute the probability density at these points
     probabilities = np.exp(gmm.score_samples(points))
 
-    # Log likelihood
-    if np.where(probabilities <= 1e-300)[0].size != 0:
-        log_likelihood = -np.inf
-    else:
-        log_likelihood = np.sum(np.log(probabilities))
+    # # Log likelihood
+    # if np.where(probabilities <= 1e-300)[0].size != 0:
+    #     log_likelihood = -np.inf
+    # else:
+    log_likelihood = np.sum(np.log(probabilities))
 
     return log_likelihood
 
