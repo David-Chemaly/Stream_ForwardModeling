@@ -14,7 +14,7 @@ from sklearn.mixture import GaussianMixture
 from orbit_evolution_potential import run
 
 ### Define Data ###
-def generate_data():
+def generate_data(data_type='xy'):
     # 4 for Potential
     halo_mass     = 7.5e11# * u.Msun 
     concentration = 20
@@ -38,15 +38,17 @@ def generate_data():
     params     = (halo_mass, concentration, flattening_xy, flattening_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], t_end, alpha, beta, charlie, aa, bb)
     clean_data = model(params)
     
-    ### Add Noise ### 
-    sigma = 2
-    dirty_data = clean_data + np.random.normal(0, sigma, clean_data.shape)
 
-    # ### Add Noise only to Radius ### CHEATING ###
-    # sigma = 2
-    # r   = np.sqrt(clean_data[0]**2 + clean_data[1]**2) + np.random.normal(0, sigma, len(clean_data[0]))
-    # phi = np.arctan2(clean_data[1], clean_data[0]) 
-    # dirty_data = np.array([r*np.cos(phi), r*np.sin(phi)])
+    if data_type == 'xy':
+        ### Add Noise ### 
+        sigma = 2
+        dirty_data = clean_data + np.random.normal(0, sigma, clean_data.shape)
+    elif data_type == 'radial':
+        ### Add Noise only to Radius ### CHEATING ###
+        sigma = 2
+        r   = np.sqrt(clean_data[0]**2 + clean_data[1]**2) + np.random.normal(0, sigma, len(clean_data[0]))
+        phi = np.arctan2(clean_data[1], clean_data[0]) 
+        dirty_data = np.array([r*np.cos(phi), r*np.sin(phi)])
 
     return clean_data, dirty_data, sigma
 
@@ -242,6 +244,13 @@ def log_likelihood_density(params, dict_data):
     
     return log_likelihood
 
+def unwrap(angles):
+    arg_decrease = np.where( np.diff(angles) <= 0 )[0]
+    for i in arg_decrease:
+        angles[i+1:] += 2 * np.pi
+
+    return angles
+
 def log_likelihood_phi(params, dict_data):
 
     # Unpack the data
@@ -253,10 +262,10 @@ def log_likelihood_phi(params, dict_data):
     model_data = model(params)
 
     r_data   = np.sqrt(dirty_data[0]**2 + dirty_data[1]**2)
-    phi_data = np.arctan2(dirty_data[1], dirty_data[0])
+    phi_data = unwrap(np.arctan2(dirty_data[1], dirty_data[0]))
 
     r_model   = np.sqrt(model_data[0]**2 + model_data[1]**2)
-    phi_model = np.arctan2(model_data[1], model_data[0])
+    phi_model = unwrap(np.arctan2(model_data[1], model_data[0]))
 
     # Based on FOV of data
     padding = 0.01
@@ -278,22 +287,13 @@ def log_likelihood_phi(params, dict_data):
     arg_in  = np.where( (phi_model.min() <= phi_data) &  (phi_data <= phi_model.max()) )[0]
     arg_out = np.where( (phi_model <= phi_min_limit) |  (phi_model >= phi_max_limit) )[0]
 
-    if len(arg_out) != 0: # or len(arg_in) != len(phi_data):
+    if phi_data.min() != phi_model.min() or phi_data.max() != phi_model.max() or len(arg_in) != len(phi_data):
         log_likelihood = -np.inf
 
     else:
-        fill = 0
-        f_r   = interp1d(phi_model, r_model, kind='linear', bounds_error=False, fill_value=fill)
+        f_r   = interp1d(phi_model, r_model, kind='linear')
         r_new = f_r(phi_data)
-
-        arg_out = np.where(r_new == 0)[0]
-        arg_bot = arg_out[np.where(arg_out < len(phi_data)//2)[0]]
-        arg_top = arg_out[np.where(arg_out > len(phi_data)//2)[0]]
-        for i in np.flip(arg_bot):
-            r_new[i] = r_new[i+1]
-        for i in arg_top:
-            r_new[i] = r_new[i-1]
-
+        
         # Assuming 'sigma' is either a scalar or an array of standard deviations for your observed data
         # Chi-squared statistic
         chi_squared = np.sum(((r_data - r_new) / sigma) ** 2)
@@ -303,37 +303,6 @@ def log_likelihood_phi(params, dict_data):
         log_likelihood = -0.5 * chi_squared
     
     return log_likelihood
-
-def log_likelihood_prob(params, dict_data):
-
-    # Unpack the data
-    clean_data  = dict_data['clean_data']
-    dirty_data  = dict_data['dirty_data']
-    sigma = dict_data['sigma']
-
-    # Generate model predictions for the given parameters
-    model_data = model(params)
-    length = get_gamma(model_data)[-1]
-
-    # Probability of CDF
-    dx, dy = 0.01, 0.01
-
-    x_min = norm.cdf(model_data[0][None, :]-dx, dirty_data[0][:, None], sigma)
-    x_max = norm.cdf(model_data[0][None, :]+dx, dirty_data[0][:, None], sigma)
-
-    y_min = norm.cdf(model_data[1][None, :]-dy, dirty_data[1][:, None], sigma)
-    y_max = norm.cdf(model_data[1][None, :]+dy, dirty_data[1][:, None], sigma)
-    
-    x_prob = np.sum( abs(x_max - x_min), axis=1)
-    y_prob = np.sum( abs(y_max - y_min), axis=1)
-
-    # Log likelihood
-    if np.where(x_prob == 0)[0].size != 0 or np.where(x_prob == 0)[0].size != 0:
-        log_likelihood = -np.inf
-    else:
-        log_likelihood = np.sum(np.log(x_prob) + np.log(y_prob)) - length
-
-    return log_likelihood    
 
 def log_likelihood_GMM(params, dict_data):
 
@@ -376,11 +345,11 @@ def log_likelihood_GMM(params, dict_data):
     # Compute the probability density at these points
     probabilities = np.exp(gmm.score_samples(points))
 
-    # # Log likelihood
-    # if np.where(probabilities <= 1e-300)[0].size != 0:
-    #     log_likelihood = -np.inf
-    # else:
-    log_likelihood = np.sum(np.log(probabilities))
+    # Log likelihood
+    if np.where(probabilities <= 1e-300)[0].size != 0:
+        log_likelihood = -np.inf
+    else:
+        log_likelihood = np.sum(np.log(probabilities))
 
     return log_likelihood
 
