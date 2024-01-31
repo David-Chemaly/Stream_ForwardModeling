@@ -14,7 +14,7 @@ from sklearn.mixture import GaussianMixture
 from orbit_evolution_potential import run
 
 ### Define Data ###
-def generate_data(data_type='xy'):
+def generate_data(data_type):
     # 4 for Potential
     halo_mass     = 7.5e11# * u.Msun 
     concentration = 20
@@ -25,14 +25,14 @@ def generate_data(data_type='xy'):
     pos_init = [50, -30, 40]# * u.kpc 
     vel_init = [90,100,80]# * u.km/u.s
 
+    # 1 for time
+    t_end = 1.5
+
     # 3 for orientation
     alpha, beta, charlie = 0.01, -0.5, 0.7
 
     # 2 for rotation
     aa, bb = -0.1, 0.3
-
-    # 1 for time
-    t_end = 2.75
 
     ### Run ###
     params     = (halo_mass, concentration, flattening_xy, flattening_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], t_end, alpha, beta, charlie, aa, bb)
@@ -267,33 +267,13 @@ def log_likelihood_phi(params, dict_data):
     r_model   = np.sqrt(model_data[0]**2 + model_data[1]**2)
     phi_model = unwrap(np.arctan2(model_data[1], model_data[0]))
 
-    # Based on FOV of data
-    padding = 0.01
-    sign_min, sign_max = phi_data.min()/abs(phi_data.min()), phi_data.max()/abs(phi_data.max())
-
-    if sign_min < 0:
-        phi_min_limit = phi_data.min()*(1+padding)
-    elif sign_min > 0:
-        phi_min_limit = phi_data.min()*(1-padding)
-    else:
-        phi_min_limit = phi_data.min()
-    if sign_max < 0:
-        phi_max_limit = phi_data.max()*(1-padding)
-    elif sign_max > 0:
-        phi_max_limit = phi_data.max()*(1+padding)
-    else:
-        phi_max_limit = phi_data.max()
-
-    arg_in  = np.where( (phi_model.min() <= phi_data) &  (phi_data <= phi_model.max()) )[0]
-    arg_out = np.where( (phi_model <= phi_min_limit) |  (phi_model >= phi_max_limit) )[0]
-
-    if phi_data.min() != phi_model.min() or phi_data.max() != phi_model.max() or len(arg_in) != len(phi_data):
+    if phi_data.min() != phi_model.min() or phi_data.max() != phi_model.max() or len(phi_model) != len(phi_data):
         log_likelihood = -np.inf
 
     else:
         f_r   = interp1d(phi_model, r_model, kind='linear')
         r_new = f_r(phi_data)
-        
+
         # Assuming 'sigma' is either a scalar or an array of standard deviations for your observed data
         # Chi-squared statistic
         chi_squared = np.sum(((r_data - r_new) / sigma) ** 2)
@@ -357,7 +337,7 @@ def log_likelihood_GMM(params, dict_data):
 if __name__ == "__main__":
 
     ### Generate Data ###
-    clean_data, dirty_data, sigma = generate_data()
+    clean_data, dirty_data, sigma = generate_data(data_type='radial')
     dict_data   = {'clean_data': clean_data, 'dirty_data': dirty_data , 'sigma': sigma}
 
     ### Run Dynesty ###
@@ -365,12 +345,12 @@ if __name__ == "__main__":
     pool = Pool(nworkers)
 
     ndim    = 16  # Number of dimensions (parameters)
-    sampler = dynesty.NestedSampler(log_likelihood_GMM, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
+    sampler = dynesty.NestedSampler(log_likelihood_phi, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
 
     sampler.run_nested()
     pool.close()
     pool.join()
 
     results = sampler.results
-    with open('./dynesty_results_N100_GMM.pkl', 'wb') as file:
+    with open('./dynesty_results_N100_phi.pkl', 'wb') as file:
         pickle.dump(results, file)
