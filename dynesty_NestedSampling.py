@@ -333,24 +333,32 @@ def log_likelihood_GMM(params, dict_data):
 
     return log_likelihood
 
-
 if __name__ == "__main__":
+    # Generate Data
+    clean_data, dirty_data, sigma = generate_data(data_type='xy')
+    dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
-    ### Generate Data ###
-    clean_data, dirty_data, sigma = generate_data(data_type='radial')
-    dict_data   = {'clean_data': clean_data, 'dirty_data': dirty_data , 'sigma': sigma}
-
-    ### Run Dynesty ###
+    # Run Dynesty
     nworkers = os.cpu_count()
     pool = Pool(nworkers)
 
-    ndim    = 16  # Number of dimensions (parameters)
-    sampler = dynesty.NestedSampler(log_likelihood_phi, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
-
+    ndim = 16  # Number of dimensions (parameters)
+    sampler = dynesty.DynamicNestedSampler(log_likelihood_GMM, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
     sampler.run_nested()
     pool.close()
     pool.join()
-
     results = sampler.results
-    with open('./dynesty_results_N100_phi.pkl', 'wb') as file:
+
+    save_directory = './dynesty_results_N100_phi'
+    if not os.path.exists(save_directory):
+        os.makedirs(save_directory)
+
+    # Save Dynesty results to a pickle file within the directory
+    results_file = os.path.join(save_directory, 'dynesty_results.pkl')
+    with open(results_file, 'wb') as file:
         pickle.dump(results, file)
+
+    # Save the dictionary of data to a pickle file within the directory
+    data_file = os.path.join(save_directory, 'data_dict.pkl')
+    with open(data_file, 'wb') as file:
+        pickle.dump(dict_data, file)
