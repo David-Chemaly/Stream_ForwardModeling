@@ -14,31 +14,38 @@ from sklearn.mixture import GaussianMixture
 from orbit_evolution_potential import run
 
 ### Define Data ###
-def generate_data(data_type):
-    # 4 for Potential
-    halo_mass     = 7.5e11# * u.Msun 
-    concentration = 20
-    flattening_xy  = 0.75
-    flattening_xz  = 1.25
+def generate_data(data_type, ndim, seed=None):
 
-    # 6 for Initial Conditions
-    pos_init = [50, -30, 40]# * u.kpc 
-    vel_init = [90,100,80]# * u.km/u.s
+    if seed is None:
+        # 4 for Potential
+        halo_mass     = 7.5e11# * u.Msun 
+        concentration = 20
+        flattening_xy  = 0.75
+        flattening_xz  = 1.25
 
-    # 1 for time
-    t_end = 1.5
+        # 6 for Initial Conditions
+        pos_init = [50, -30, 40]# * u.kpc 
+        vel_init = [90,100,80]# * u.km/u.s
 
-    # 3 for orientation
-    alpha, beta, charlie = 0.01, -0.5, 0.7
+        # 1 for time
+        t_end = 1.5
 
-    # 2 for rotation
-    aa, bb = -0.1, 0.3
+        # 3 for orientation
+        alpha, beta, charlie = 0.01, -0.5, 0.7
+
+        # 2 for rotation
+        aa, bb = -0.1, 0.3
+    
+        params = (halo_mass, concentration, flattening_xy, flattening_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], t_end, alpha, beta, charlie, aa, bb)
+    
+    else:
+        np.random.seed(seed)
+        utheta = np.random.rand(ndim)
+        params = prior_transform(utheta)
 
     ### Run ###
-    params     = (halo_mass, concentration, flattening_xy, flattening_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], t_end, alpha, beta, charlie, aa, bb)
     clean_data = model(params)
     
-
     if data_type == 'xy':
         ### Add Noise ### 
         sigma = 2
@@ -50,7 +57,7 @@ def generate_data(data_type):
         phi = np.arctan2(clean_data[1], clean_data[0]) 
         dirty_data = np.array([r*np.cos(phi), r*np.sin(phi)])
 
-    return clean_data, dirty_data, sigma
+    return clean_data, dirty_data, sigma, params
 
 ### Define Functions for Dynesty ###
 # Priors
