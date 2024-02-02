@@ -342,21 +342,23 @@ def log_likelihood_GMM(params, dict_data):
 
 if __name__ == "__main__":
     # Generate Data
-    clean_data, dirty_data, sigma = generate_data(data_type='xy')
+    
+    ndim = 16  # Number of dimensions (parameters)
+    seed = 99
+    clean_data, dirty_data, sigma = generate_data(data_type='xy', ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
     # Run Dynesty
     nworkers = os.cpu_count()
     pool = Pool(nworkers)
 
-    ndim = 16  # Number of dimensions (parameters)
     sampler = dynesty.DynamicNestedSampler(log_likelihood_GMM, prior_transform, ndim, pool=pool, queue_size=nworkers, logl_args=[dict_data])
     sampler.run_nested()
     pool.close()
     pool.join()
     results = sampler.results
 
-    save_directory = './dynesty_results_N100_phi'
+    save_directory = f'./dynesty_results_N100_GMM_seed{seed}'
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
 
