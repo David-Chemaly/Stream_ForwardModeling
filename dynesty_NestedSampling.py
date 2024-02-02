@@ -345,7 +345,7 @@ if __name__ == "__main__":
     
     ndim = 16  # Number of dimensions (parameters)
     seed = 99
-    clean_data, dirty_data, sigma = generate_data(data_type='xy', ndim=ndim, seed=seed)
+    clean_data, dirty_data, sigma, theo_params = generate_data(data_type='xy', ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
     # Run Dynesty
@@ -361,6 +361,10 @@ if __name__ == "__main__":
     save_directory = f'./dynesty_results_N100_GMM_seed{seed}'
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
+
+    # Save parameters
+    params_file = os.path.join(save_directory, 'params.txt')
+    np.savetxt(params_file, theo_params)
 
     # Save Dynesty results to a pickle file within the directory
     results_file = os.path.join(save_directory, 'dynesty_results.pkl')
