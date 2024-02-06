@@ -238,6 +238,4 @@ def run(Mass, concentraion, qxy, qxz, pos_init, vel_init, t_end, alpha, beta, ga
         xp, yp, zp, vxp, vyp, vzp = LeepFrog(halo.acceleration, xp, yp, zp, vxp, vyp, vzp, dt*u.Gyr)
         all_pos_p[:,int(tndex+1)] = [xp,yp,zp]
     
-    # all_pos_p = R_rotation  @ R_orientation @ all_pos_p
-
     return all_pos_p

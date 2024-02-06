@@ -78,7 +78,7 @@ def prior_transform(utheta):
 
     x_vel_min, x_vel_max = -75, 75
     y_vel_min, y_vel_max = 75, 125
-    z_vel_min, z_vel_max = -75, -75
+    z_vel_min, z_vel_max = -75, 75
 
     t_end_min, t_end_max = 1, 2
 
