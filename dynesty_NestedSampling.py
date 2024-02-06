@@ -72,13 +72,13 @@ def prior_transform(utheta):
     qxy_min, qxy_max = 0.5, 1.5
     qxz_min, qxz_max = 0.5, 1.5
 
-    x_pos_min, x_pos_max = 25, 75
-    y_pos_min, y_pos_max = -75, -25
-    z_pos_min, z_pos_max = 25, 75
+    x_pos_min, x_pos_max = -75, -25
+    y_pos_min, y_pos_max = -1, 1
+    z_pos_min, z_pos_max = -75, 75
 
-    x_vel_min, x_vel_max = 75, 125
+    x_vel_min, x_vel_max = -75, 75
     y_vel_min, y_vel_max = 75, 125
-    z_vel_min, z_vel_max = 75, 125
+    z_vel_min, z_vel_max = -75, -75
 
     t_end_min, t_end_max = 1, 2
 
@@ -344,7 +344,7 @@ if __name__ == "__main__":
     # Generate Data
     
     ndim = 16  # Number of dimensions (parameters)
-    seed = 99
+    seed = 66
     clean_data, dirty_data, sigma, theo_params = generate_data(data_type='xy', ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     pool.join()
     results = sampler.results
 
-    save_directory = f'./dynesty_results_N100_GMM_seed{seed}'
+    save_directory = f'./dynesty_results_GMM_seed{seed}'
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
 
