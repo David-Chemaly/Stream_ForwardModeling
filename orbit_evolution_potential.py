@@ -11,13 +11,16 @@ rho_c = (3 * cosmo.H(0.0) ** 2 / (8 * np.pi * G)).to(u.Msun / u.kpc ** 3)
 
 class NFW():
 
-    def __init__(self,M,c,qxy,qxz):
+    def __init__(self,M,c,qxy,qxz, R_orientation, R_rotation):
         self.M = M
         self.c = c
         self.qxy = qxy
         self.qxz = qxz
+        self.R_orientation = R_orientation
+        self.R_rotation = R_rotation
 
     def radius_flatten(self,x,y,z):
+        x, y, z = self.R_rotation @ self.R_orientation @ np.array([x.value,y.value,z.value]) * x.unit
         return np.sqrt((x)**2+(y/self.qxy)**2+(z/self.qxz)**2)
     
     def A_NFW(self):
@@ -210,8 +213,13 @@ class get_mat():
     
 def run(Mass, concentraion, qxy, qxz, pos_init, vel_init, t_end, alpha, beta, gama, aa, bb, N_time):
 
+    # Rotate
+    rot_mat = get_mat(alpha, beta, gama, aa, bb)
+    R_orientation = rot_mat.orientation()
+    R_rotation    = rot_mat.rotation()
+
     # Define Potential
-    halo = NFW(Mass, concentraion, qxy, qxz)
+    halo = NFW(Mass, concentraion, qxy, qxz, R_orientation, R_rotation)
 
     # Define Initial Conditions
     xp, yp, zp    = pos_init[0], pos_init[1], pos_init[2]
@@ -230,12 +238,6 @@ def run(Mass, concentraion, qxy, qxz, pos_init, vel_init, t_end, alpha, beta, ga
         xp, yp, zp, vxp, vyp, vzp = LeepFrog(halo.acceleration, xp, yp, zp, vxp, vyp, vzp, dt*u.Gyr)
         all_pos_p[:,int(tndex+1)] = [xp,yp,zp]
     
-    # Rotate
-    rot_mat = get_mat(alpha, beta, gama, aa, bb)
-
-    R_orientation = rot_mat.orientation()
-    R_rotation    = rot_mat.rotation()
-
-    all_pos_p = R_rotation  @ R_orientation @ all_pos_p
+    # all_pos_p = R_rotation  @ R_orientation @ all_pos_p
 
     return all_pos_p
