@@ -11,32 +11,28 @@ from scipy.interpolate import interp1d
 from scipy.stats import norm, truncnorm
 from sklearn.mixture import GaussianMixture
 
-from orbit_evolution_potential import run
+from orbit_evolution_potential import run, run_Gala
 
 ### Define Data ###
 def generate_data(data_type, ndim, seed=None):
 
     if seed is None:
-        # 4 for Potential
-        halo_mass     = 7.5e11# * u.Msun 
-        concentration = 20
-        flattening_xy  = 0.75
-        flattening_xz  = 1.25
 
-        # 6 for Initial Conditions
-        pos_init = [50, -30, 40]# * u.kpc 
-        vel_init = [90,100,80]# * u.km/u.s
+        # 4 for potential
+        halo_mass = 1.05e11 # * u.Msun
+        Rs = 10 # * u.kpc
+        q_xy = 1.1
+        q_xz = 0.8
 
-        # 1 for time
-        t_end = 1.5
+        pos_init = [-33, 0, 0] # * u.kpc
+        vel_init = [-70, 45, -75] # * u.km/u.s
+ 
+        time = 1.5 # * u.Gyr
+        
+        alpha, beta, charlie = 0.4, 1.2, -0.4
+        aa, bb = 1.75, -0.6
 
-        # 3 for orientation
-        alpha, beta, charlie = 0.01, -0.5, 0.7
-
-        # 2 for rotation
-        aa, bb = -0.1, 0.3
-    
-        params = (halo_mass, concentration, flattening_xy, flattening_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], t_end, alpha, beta, charlie, aa, bb)
+        params = (halo_mass, Rs, q_xy, q_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], time, alpha, beta, charlie, aa, bb)
     
     else:
         np.random.seed(seed)
@@ -68,19 +64,19 @@ def prior_transform(utheta):
     u_t_end, u_alpha, u_beta, u_charlie, u_aa, u_bb  = utheta
 
     M_min, M_max     = 1e11, 1e12
-    c_min, c_max     = 18, 22
+    Rs_min, Rs_max   = 8, 12
     qxy_min, qxy_max = 0.5, 1.5
     qxz_min, qxz_max = 0.5, 1.5
 
-    x_pos_min, x_pos_max = -75, -25
-    y_pos_min, y_pos_max = -1, 1
+    x_pos_min, x_pos_max = -75, 75
+    y_pos_min, y_pos_max = -75, 75
     z_pos_min, z_pos_max = -75, 75
 
     x_vel_min, x_vel_max = -75, 75
-    y_vel_min, y_vel_max = 75, 125
+    y_vel_min, y_vel_max = -75, 75
     z_vel_min, z_vel_max = -75, 75
 
-    t_end_min, t_end_max = 1, 2
+    t_end_min, t_end_max = 1, 3
 
     alpha_mu, alpha_sigma = 0, 1
     beta_mu, beta_sigma = 0, 1
@@ -90,7 +86,7 @@ def prior_transform(utheta):
 
     # Transform each parameter
     halo_mass     = M_min + u_halo_mass * (M_max - M_min) 
-    concentration = c_min + u_concentration * (c_max - c_min)  
+    Rs = Rs_min + u_concentration * (Rs_max - Rs_min)  
     flattening_xy = qxy_min + u_flattening_xy * (qxy_max-qxy_min)  
     flattening_xz = qxz_min + u_flattening_xz * (qxz_max-qxz_min)  
 
@@ -111,14 +107,14 @@ def prior_transform(utheta):
     bb = norm.ppf(u_bb, loc=bb_mu, scale=bb_sigma)
 
     # Return the transformed parameters
-    return (halo_mass, concentration, flattening_xy, flattening_xz,
+    return (halo_mass, Rs, flattening_xy, flattening_xz,
             pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z,
             t_end, alpha, beta, charlie, aa, bb)
 
 # Model
 def model(params):
     # Unpack parameters
-    halo_mass, concentration, flattening_xy, flattening_xz, \
+    halo_mass, Rs, flattening_xy, flattening_xz, \
     pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z, \
     t_end, alpha, beta, charlie, aa, bb = params
 
@@ -127,8 +123,8 @@ def model(params):
     vel_init = np.array([vel_init_x, vel_init_y, vel_init_z]) * u.km/u.s
 
     # Call your 'run' function
-    N_time   = 100
-    test_pos = run(halo_mass*u.Msun, concentration, flattening_xy, flattening_xz, pos_init, vel_init, t_end, alpha, beta, charlie, aa, bb, N_time)[:2].value 
+    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(halo_mass*u.Msun, Rs*u.kpc, flattening_xy, flattening_xz, t_end*u.Gyr, pos_init, vel_init, alpha, beta, charlie, aa, bb)
+    test_pos = orbit_pos_p.T[:2].value 
 
     x_pos, y_pos = test_pos[0], test_pos[1]
 
@@ -344,7 +340,7 @@ if __name__ == "__main__":
     # Generate Data
     
     ndim = 16  # Number of dimensions (parameters)
-    seed = 77
+    seed = 13
     clean_data, dirty_data, sigma, theo_params = generate_data(data_type='xy', ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 

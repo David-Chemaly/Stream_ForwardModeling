@@ -2,9 +2,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 import astropy.units as u
 from tqdm import tqdm
+import sympy as sp
 from scipy.spatial.transform import Rotation
 
+import astropy.units as u
 from astropy.constants import G
+G = G.to(u.pc * u.Msun**-1 * (u.km / u.s)**2)
+from astropy.coordinates import CartesianRepresentation, CartesianDifferential
+
+import gala.potential as gp
+import gala.dynamics as gd
+import gala.integrate as gi
+import gala.units as gu
+
+from gala.units import galactic
+from gala.potential import NFWPotential
+from gala.dynamics import PhaseSpacePosition, MockStream
+from gala.integrate import LeapfrogIntegrator
+
 from astropy.cosmology import default_cosmology
 cosmo = default_cosmology.get()
 rho_c = (3 * cosmo.H(0.0) ** 2 / (8 * np.pi * G)).to(u.Msun / u.kpc ** 3)
@@ -239,3 +254,183 @@ def run(Mass, concentraion, qxy, qxz, pos_init, vel_init, t_end, alpha, beta, ga
         all_pos_p[:,int(tndex+1)] = [xp,yp,zp]
     
     return all_pos_p
+
+'''
+Gala generated orbits and/or streams
+'''
+
+def get_Jacobian(a,b,c):
+    # Define the symbols for Cartesian and Spherical coordinates
+    x, y, z = sp.symbols('x y z')
+
+    # Define the transformations from Cartesian to Spherical coordinates
+    r_expr = sp.sqrt(x**2 + y**2 + z**2)
+    theta_expr = sp.acos(z / sp.sqrt(x**2 + y**2 + z**2))
+    phi_expr = sp.atan2(y, x)
+
+    # Create the Jacobian matrix
+    J = sp.Matrix([
+        [r_expr.diff(x), r_expr.diff(y), r_expr.diff(z)],
+        [theta_expr.diff(x), theta_expr.diff(y), theta_expr.diff(z)],
+        [phi_expr.diff(x), phi_expr.diff(y), phi_expr.diff(z)]
+    ])
+
+    # Define a specific point (x, y, z)
+    point = {x: a, y: b, z: c}  # Example point
+
+    # Substitute the point into the Jacobian matrix to get numeric values
+    J_numeric = J.subs(point)
+
+    return np.array(J_numeric, dtype=float)
+
+def get_rt(wp, pot_NFW, mass_plummer):
+
+    rp = np.linalg.norm( wp.xyz )
+    angular_velocity = ( np.linalg.norm( wp.angular_momentum() ) / rp**2 ).to(u.Gyr**-1)
+
+    J = get_Jacobian(wp.x.value, wp.y.value, wp.z.value)
+    d2pdr2 = (J.T * pot_NFW.hessian( wp )[:,:,0] * J)[0,0]
+    rt = ( G * mass_plummer / (angular_velocity**2 - d2pdr2) ).to(u.kpc**3) **(1/3)
+    return rt
+
+class get_mat():
+
+    def __init__(self, a, b, c, aa, bb):
+
+        self.v1 = np.array([0, 0, 1])
+
+        v2 = np.array([a, b, c])
+        self.v2 = v2 / np.sum(v2**2)**.5
+
+        v3 = np.cross(self.v1, self.v2)
+        self.v3 = v3 / np.sum(v3**2)**.5
+
+        self.aa = aa
+        self.bb = bb
+    
+    def orientation(self):
+        
+        angle = np.arccos(np.sum(self.v1 * self.v2))
+
+        return Rotation.from_rotvec(angle * self.v3).as_matrix()
+    
+    def rotation(self):
+
+        z_new = - (self.aa * self.v2[0] + self.bb * self.v2[1]) / self.v2[2]
+        v_new = np.array([self.aa, self.bb, z_new])
+
+        v_norm = v_new / np.sum(v_new**2)**.5
+
+        new_angle = np.arccos(np.sum(v_norm*self.v3)) 
+
+        return Rotation.from_rotvec(new_angle * self.v2).as_matrix()
+    
+def run_Gala(mass_halo, r_s, q_xy, q_xz, 
+             t_end, 
+             pos_p, vel_p, 
+             alpha, beta, charlie, aa, bb, 
+             mass_plummer = 1e8 * u.Msun, r_plummer = 1 * u.kpc, 
+             # dt = 1 * u.Myr, 
+             N_time = 100,
+             N = 0, 
+             factor = 1.5):
+
+    # Rotate
+    if alpha*beta*charlie*aa*bb != 0:
+        rot_mat = get_mat(alpha, beta, charlie, aa, bb)
+        R_orientation = rot_mat.orientation()
+        R_rotation    = rot_mat.rotation()
+    else:
+        R_orientation = np.eye(3)
+        R_rotation    = np.eye(3)
+
+    # Define Main Halo Potential
+    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=R_rotation@R_orientation)
+
+    # Define Time
+    time = np.linspace(0, t_end.value, N_time) # * u.Gyr
+    dt   = (time[1] - time[0]) * u.Gyr
+
+    step   = int(t_end/dt)
+    if N !=0:
+        step_N = int(step/N)
+    else:
+        step_N = int(step/(N+1))
+
+    orbit_pos_p = np.zeros((len(time), 3)) * u.kpc
+    orbit_vel_p = np.zeros((len(time), 3)) 
+    orbit_pos_p[0] = pos_p
+    orbit_vel_p[0] = vel_p
+
+    pos_N = np.zeros((N, 3)) * u.kpc
+    vel_N = np.zeros((N, 3)) * u.km/u.s
+
+    orbit_pos_N = np.zeros((len(time), N, 3)) * u.kpc
+    orbit_vel_N = np.zeros((len(time), N, 3)) * u.km/u.s
+
+    leading_arg  = []
+    trailing_arg = []
+
+    counter = 0
+    for i in tqdm(range(len(time))):
+
+        # Progenitor Phase Space Position
+        wp = gd.PhaseSpacePosition(pos = pos_p,
+                                   vel = vel_p)
+        
+        if i % step_N == 0 and N != 0:
+            j = i//step_N
+
+            no_rot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=None)
+            rt     = get_rt(wp, no_rot_NFW, mass_plummer) * factor
+            rp     = np.linalg.norm( wp.xyz )
+            theta  = np.arccos(wp.z/rp)
+            phi    = np.arctan2(wp.y,wp.x)
+
+            if counter%2 == 0:
+                xt1, yt1, zt1 = (rp - rt)*np.sin(theta)*np.cos(phi), (rp - rt)*np.sin(theta)*np.sin(phi), (rp - rt)*np.cos(theta)
+                leading_arg.append(i)
+            else:
+                xt1, yt1, zt1 = (rp + rt)*np.sin(theta)*np.cos(phi), (rp + rt)*np.sin(theta)*np.sin(phi), (rp + rt)*np.cos(theta)
+                trailing_arg.append(i)
+
+            # New N starting position
+            pos_N[j] = np.array([xt1.value, yt1.value, zt1.value]) * u.kpc #  # tidal radius
+
+            # New N starting velocity
+            sig = np.sqrt( G*mass_plummer/(6*np.sqrt(rt**2+r_plummer**2)) ).to(u.km/u.s)
+            if counter%2 == 0:
+                vel_N[j] = vel_p - np.sign(vel_p)*abs(np.random.normal(0, sig.value)) * u.km/u.s # velocity dispersion
+            else:
+                vel_N[j] = vel_p + np.sign(vel_p)*abs(np.random.normal(0, sig.value)) * u.km/u.s
+
+            counter += 1
+
+        # Save Progenitor new Position and Velocity
+        orbit_pos_p[i] = pos_p
+        orbit_vel_p[i] = vel_p
+
+        if N != 0:
+
+            # Save N new Position and Velocity
+            orbit_pos_N[i] = pos_N
+            orbit_vel_N[i] = vel_N
+
+            # All N in Phase Space Position
+            wN = gd.PhaseSpacePosition(pos = pos_N[:j+1].T,
+                                    vel = vel_N[:j+1].T)
+
+            # Define Plummer Potential
+            pot_plummer  = gp.PlummerPotential(mass_plummer, r_plummer, units=galactic, origin=pos_p, R=None)
+            pot_combined = pot_NFW + pot_plummer
+            orbit_N = gp.Hamiltonian(pot_combined).integrate_orbit(wN, dt=dt, n_steps=1)
+            pos_N[:j+1] = orbit_N.xyz[:, -1].T
+            vel_N[:j+1] = orbit_N.v_xyz[:, -1].T
+        
+        # Progenitor new Position and Velocity
+        orbit_p = gp.Hamiltonian(pot_NFW).integrate_orbit(wp, dt=dt, n_steps=1)
+        pos_p = orbit_p.xyz[:, -1]
+        vel_p = orbit_p.v_xyz[:, -1]
+    
+    return orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg
+
