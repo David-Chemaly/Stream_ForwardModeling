@@ -14,7 +14,7 @@ from sklearn.mixture import GaussianMixture
 from orbit_evolution_potential import run, run_Gala
 
 ### Define Data ###
-def generate_data(data_type, ndim, seed=None):
+def generate_data(data_type, sigma, ndim, seed=None):
 
     if seed is None:
 
@@ -29,10 +29,12 @@ def generate_data(data_type, ndim, seed=None):
  
         time = 1.5 # * u.Gyr
         
-        alpha, beta, charlie = 0.4, 1.2, -0.4
-        aa, bb = 1.75, -0.6
+        # alpha, beta, charlie = 0.4, 1.2, -0.4
+        # aa, bb = 1.75, -0.6
 
-        params = (halo_mass, Rs, q_xy, q_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], time, alpha, beta, charlie, aa, bb)
+        x1, x2, x3 = 0, 0, 0
+
+        params = (halo_mass, Rs, q_xy, q_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], time, x1, x2, x3)
     
     else:
         np.random.seed(seed)
@@ -44,16 +46,14 @@ def generate_data(data_type, ndim, seed=None):
     
     if data_type == 'xy':
         ### Add Noise ### 
-        sigma = 2
         dirty_data = clean_data + np.random.normal(0, sigma, clean_data.shape)
     elif data_type == 'radial':
         ### Add Noise only to Radius ### CHEATING ###
-        sigma = 2
         r   = np.sqrt(clean_data[0]**2 + clean_data[1]**2) + np.random.normal(0, sigma, len(clean_data[0]))
         phi = np.arctan2(clean_data[1], clean_data[0]) 
         dirty_data = np.array([r*np.cos(phi), r*np.sin(phi)])
 
-    return clean_data, dirty_data, sigma, params
+    return clean_data, dirty_data, params
 
 ### Define Functions for Dynesty ###
 # Priors
@@ -61,28 +61,23 @@ def prior_transform(utheta):
     # Unpack the unit cube values
     u_halo_mass, u_concentration, u_flattening_xy, u_flattening_xz, \
     u_pos_init_x, u_pos_init_y, u_pos_init_z, u_vel_init_x, u_vel_init_y, u_vel_init_z, \
-    u_t_end, u_alpha, u_beta, u_charlie, u_aa, u_bb  = utheta
+    u_t_end, u_x1, u_x2, u_x3 = utheta
 
     M_min, M_max     = 1e11, 1e12
     Rs_min, Rs_max   = 8, 12
     qxy_min, qxy_max = 0.5, 1.5
     qxz_min, qxz_max = 0.5, 1.5
 
-    x_pos_min, x_pos_max = -75, 75
-    y_pos_min, y_pos_max = -75, 75
+    x_pos_min, x_pos_max = -75, -25
+    y_pos_min, y_pos_max = -15, 15
     z_pos_min, z_pos_max = -75, 75
 
-    x_vel_min, x_vel_max = -75, 75
-    y_vel_min, y_vel_max = -75, 75
-    z_vel_min, z_vel_max = -75, 75
+    x_vel_min, x_vel_max = -100, 100
+    y_vel_min, y_vel_max = 0, 100
+    z_vel_min, z_vel_max = -100, 100
 
     t_end_min, t_end_max = 1, 3
 
-    alpha_mu, alpha_sigma = 0, 1
-    beta_mu, beta_sigma = 0, 1
-    charlie_mu, charlie_sigma = 0, 1
-    aa_mu, aa_sigma = 0, 1
-    bb_mu, bb_sigma = 0, 1
 
     # Transform each parameter
     halo_mass     = M_min + u_halo_mass * (M_max - M_min) 
@@ -100,30 +95,29 @@ def prior_transform(utheta):
 
     t_end = t_end_min + u_t_end * (t_end_max - t_end_min)
 
-    alpha = norm.ppf(u_alpha, loc=alpha_mu, scale=alpha_sigma)
-    beta = norm.ppf(u_beta, loc=beta_mu, scale=beta_sigma)
-    charlie = norm.ppf(u_charlie, loc=charlie_mu, scale=charlie_sigma)
-    aa = norm.ppf(u_aa, loc=aa_mu, scale=aa_sigma)
-    bb = norm.ppf(u_bb, loc=bb_mu, scale=bb_sigma)
+    # Already uniform from [0,1]
+    x1 = u_x1
+    x2 = u_x2
+    x3 = u_x3
 
     # Return the transformed parameters
     return (halo_mass, Rs, flattening_xy, flattening_xz,
             pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z,
-            t_end, alpha, beta, charlie, aa, bb)
+            t_end, x1, x2, x3)
 
 # Model
 def model(params):
     # Unpack parameters
     halo_mass, Rs, flattening_xy, flattening_xz, \
     pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z, \
-    t_end, alpha, beta, charlie, aa, bb = params
+    t_end, x1, x2, x3 = params
 
     # Repack some of the parameters to match the expected input format of your 'run' function
     pos_init = np.array([pos_init_x, pos_init_y, pos_init_z]) * u.kpc
     vel_init = np.array([vel_init_x, vel_init_y, vel_init_z]) * u.km/u.s
 
     # Call your 'run' function
-    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(halo_mass*u.Msun, Rs*u.kpc, flattening_xy, flattening_xz, t_end*u.Gyr, pos_init, vel_init, alpha, beta, charlie, aa, bb)
+    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(halo_mass*u.Msun, Rs*u.kpc, flattening_xy, flattening_xz, t_end*u.Gyr, pos_init, vel_init, x1, x2, x3)
     test_pos = orbit_pos_p.T[:2].value 
 
     x_pos, y_pos = test_pos[0], test_pos[1]
@@ -339,9 +333,10 @@ def log_likelihood_GMM(params, dict_data):
 if __name__ == "__main__":
     # Generate Data
     
-    ndim = 16  # Number of dimensions (parameters)
-    seed = 13
-    clean_data, dirty_data, sigma, theo_params = generate_data(data_type='xy', ndim=ndim, seed=seed)
+    ndim = 14  # Number of dimensions (parameters)
+    seed = 621
+    sigma = 2
+    clean_data, dirty_data, theo_params = generate_data(data_type='xy', sigma=sigma, ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
     # Run Dynesty
@@ -360,7 +355,7 @@ if __name__ == "__main__":
     pool.join()
     results = sampler.results
 
-    save_directory = f'./dynesty_results_GMM_seed{seed}'
+    save_directory = f'./dynesty_results_GMM_seed{seed}_sigma{sigma}_fitall'
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
 

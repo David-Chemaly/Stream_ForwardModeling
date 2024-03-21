@@ -325,27 +325,46 @@ class get_mat():
 
         return Rotation.from_rotvec(new_angle * self.v2).as_matrix()
     
+class FastRandomRotationMatrices():
+
+    def __init__(self, x1, x2, x3):
+        self.x1 = x1
+        self.x2 = x2
+        self.x3 = x3
+
+    def rot_z(self):
+        theta = 2*np.pi*self.x1
+        return np.array([[np.cos(theta), np.sin(theta), 0], 
+                        [-np.sin(theta), np.cos(theta), 0], 
+                        [0, 0, 1]])
+
+    def rot_v(self):
+        theta = 2*np.pi*self.x2
+        return np.array( [np.cos(theta)*np.sqrt(self.x3), np.sin(theta)*np.sqrt(self.x3), np.sqrt(1-self.x3)] )
+    
+    def forward(self):
+        R = self.rot_z()
+        v = self.rot_v()[:, None]
+
+        M = (2*v@v.T - np.eye(3)) @ R
+
+        return M
+    
 def run_Gala(mass_halo, r_s, q_xy, q_xz, 
              t_end, 
              pos_p, vel_p, 
-             alpha, beta, charlie, aa, bb, 
-             mass_plummer = 1e8 * u.Msun, r_plummer = 1 * u.kpc, 
-             # dt = 1 * u.Myr, 
+             x1, x2, x3,
+             mass_plummer = 1e8 * u.Msun, 
+             r_plummer = 1 * u.kpc, 
              N_time = 100,
              N = 0, 
              factor = 1.5):
 
     # Rotate
-    if alpha*beta*charlie*aa*bb != 0:
-        rot_mat = get_mat(alpha, beta, charlie, aa, bb)
-        R_orientation = rot_mat.orientation()
-        R_rotation    = rot_mat.rotation()
-    else:
-        R_orientation = np.eye(3)
-        R_rotation    = np.eye(3)
+    rot_mat = FastRandomRotationMatrices(x1, x2, x3)
 
     # Define Main Halo Potential
-    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=R_rotation@R_orientation)
+    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=rot_mat.forward())
 
     # Define Time
     time = np.linspace(0, t_end.value, N_time) # * u.Gyr
