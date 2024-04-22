@@ -29,12 +29,9 @@ def generate_data(data_type, sigma, ndim, seed=None):
  
         time = 1.5 # * u.Gyr
         
-        # alpha, beta, charlie = 0.4, 1.2, -0.4
-        # aa, bb = 1.75, -0.6
+        kx, ky, kz, tx, ty = 0, 0, 0, 0, 0
 
-        x1, x2, x3 = 0, 0, 0
-
-        params = (halo_mass, Rs, q_xy, q_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], time, x1, x2, x3)
+        params = (halo_mass, Rs, q_xy, q_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], time, kx, ky, kz, tx, ty)
     
     else:
         np.random.seed(seed)
@@ -47,6 +44,7 @@ def generate_data(data_type, sigma, ndim, seed=None):
     if data_type == 'xy':
         ### Add Noise ### 
         dirty_data = clean_data + np.random.normal(0, sigma, clean_data.shape)
+
     elif data_type == 'radial':
         ### Add Noise only to Radius ### CHEATING ###
         r   = np.sqrt(clean_data[0]**2 + clean_data[1]**2) + np.random.normal(0, sigma, len(clean_data[0]))
@@ -59,9 +57,9 @@ def generate_data(data_type, sigma, ndim, seed=None):
 # Priors
 def prior_transform(utheta):
     # Unpack the unit cube values
-    u_halo_mass, u_concentration, u_flattening_xy, u_flattening_xz, \
+    u_halo_mass, u_Rs, u_flattening_xy, u_flattening_xz, \
     u_pos_init_x, u_pos_init_y, u_pos_init_z, u_vel_init_x, u_vel_init_y, u_vel_init_z, \
-    u_t_end, u_x1, u_x2, u_x3 = utheta
+    u_t_end, u_kx, u_ky, u_kz, u_tx, u_ty = utheta
 
     M_min, M_max     = 1e11, 1e12
     Rs_min, Rs_max   = 8, 12
@@ -78,10 +76,9 @@ def prior_transform(utheta):
 
     t_end_min, t_end_max = 1, 3
 
-
     # Transform each parameter
     halo_mass     = M_min + u_halo_mass * (M_max - M_min) 
-    Rs = Rs_min + u_concentration * (Rs_max - Rs_min)  
+    Rs = Rs_min + u_Rs * (Rs_max - Rs_min)  
     flattening_xy = qxy_min + u_flattening_xy * (qxy_max-qxy_min)  
     flattening_xz = qxz_min + u_flattening_xz * (qxz_max-qxz_min)  
 
@@ -96,28 +93,32 @@ def prior_transform(utheta):
     t_end = t_end_min + u_t_end * (t_end_max - t_end_min)
 
     # Already uniform from [0,1]
-    x1 = u_x1
-    x2 = u_x2
-    x3 = u_x3
+
+    kx = norm.ppf(u_kx, loc=0, scale=1)
+    ky = norm.ppf(u_ky, loc=0, scale=1)
+    kz = norm.ppf(u_kz, loc=0, scale=1)
+
+    tx = norm.ppf(u_tx, loc=0, scale=1)
+    ty = norm.ppf(u_ty, loc=0, scale=1)
 
     # Return the transformed parameters
     return (halo_mass, Rs, flattening_xy, flattening_xz,
             pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z,
-            t_end, x1, x2, x3)
+            t_end, kx, ky, kz, tx, ty)
 
 # Model
 def model(params):
     # Unpack parameters
     halo_mass, Rs, flattening_xy, flattening_xz, \
     pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z, \
-    t_end, x1, x2, x3 = params
+    t_end, kx, ky, kz, tx, ty = params
 
     # Repack some of the parameters to match the expected input format of your 'run' function
     pos_init = np.array([pos_init_x, pos_init_y, pos_init_z]) * u.kpc
     vel_init = np.array([vel_init_x, vel_init_y, vel_init_z]) * u.km/u.s
 
     # Call your 'run' function
-    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(halo_mass*u.Msun, Rs*u.kpc, flattening_xy, flattening_xz, t_end*u.Gyr, pos_init, vel_init, x1, x2, x3)
+    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(halo_mass*u.Msun, Rs*u.kpc, flattening_xy, flattening_xz, t_end*u.Gyr, pos_init, vel_init, kx, ky, kz, tx, ty)
     test_pos = orbit_pos_p.T[:2].value 
 
     x_pos, y_pos = test_pos[0], test_pos[1]
@@ -300,8 +301,8 @@ def log_likelihood_GMM(params, dict_data):
 
     dim = 2
     covariances = np.zeros((len(means), dim,dim)) + np.identity(dim)
-    covariances[:,0,0] = sigma
-    covariances[:,1,1] = sigma
+    covariances[:,0,0] = sigma**2
+    covariances[:,1,1] = sigma**2
 
     # Define mixing coefficients (weights)
     weights = np.zeros(len(means)) + 1/len(means)  # Replace with actual values
@@ -333,7 +334,7 @@ def log_likelihood_GMM(params, dict_data):
 if __name__ == "__main__":
     # Generate Data
     
-    ndim = 14  # Number of dimensions (parameters)
+    ndim = 16  # Number of dimensions (parameters)
     seed = 621
     sigma = 2
     clean_data, dirty_data, theo_params = generate_data(data_type='xy', sigma=sigma, ndim=ndim, seed=seed)

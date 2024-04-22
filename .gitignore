@@ -1,0 +1,7 @@
+# Ignore repositories starting with ZOO or SAM
+dynesty_results_
+wandb*
+
+# Ignore files with .ckpt extension
+*.ckpt
+*.pkl

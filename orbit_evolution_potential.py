@@ -350,10 +350,24 @@ class FastRandomRotationMatrices():
 
         return M
     
+def RodriguezRotation(kx, ky, kz, tx, ty):
+    k_norm = np.sqrt(kx**2 + ky**2 + kz**2)
+    kx /= k_norm
+    ky /= k_norm
+    kz /= k_norm
+
+    theta = np.arctan2(ty,tx)
+
+    K = np.array([[0, -kz, ky], 
+                [kz, 0, -kx], 
+                [-ky, kx, 0]])
+
+    return  np.identity(3) + np.sin(theta)*K + (1-np.cos(theta))*K@K
+
 def run_Gala(mass_halo, r_s, q_xy, q_xz, 
              t_end, 
              pos_p, vel_p, 
-             x1, x2, x3,
+             kx, ky, kz, tx, ty,
              mass_plummer = 1e8 * u.Msun, 
              r_plummer = 1 * u.kpc, 
              N_time = 100,
@@ -361,10 +375,10 @@ def run_Gala(mass_halo, r_s, q_xy, q_xz,
              factor = 1.5):
 
     # Rotate
-    rot_mat = FastRandomRotationMatrices(x1, x2, x3)
+    rot_mat = RodriguezRotation(kx, ky, kz, tx, ty)
 
     # Define Main Halo Potential
-    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=rot_mat.forward())
+    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=rot_mat)
 
     # Define Time
     time = np.linspace(0, t_end.value, N_time) # * u.Gyr
