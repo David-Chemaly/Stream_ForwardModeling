@@ -405,7 +405,7 @@ def run_Gala(mass_halo, r_s, q_xy, q_xz,
     trailing_arg = []
 
     counter = 0
-    for i in tqdm(range(len(time))):
+    for i in range(len(time)):
 
         # Progenitor Phase Space Position
         wp = gd.PhaseSpacePosition(pos = pos_p,

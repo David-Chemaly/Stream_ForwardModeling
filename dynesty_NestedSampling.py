@@ -331,12 +331,15 @@ def log_likelihood_GMM(params, dict_data):
 
     return log_likelihood
 
+def log_likelihood_fixed(params, dict_data):
+    return -100.
+
 if __name__ == "__main__":
     # Generate Data
     
     ndim = 16  # Number of dimensions (parameters)
-    seed = 621
-    sigma = 2
+    seed = 839
+    sigma = 3
     clean_data, dirty_data, theo_params = generate_data(data_type='xy', sigma=sigma, ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
@@ -348,6 +351,7 @@ if __name__ == "__main__":
                                            prior_transform, 
                                            sample='rslice',
                                            ndim=ndim, 
+                                           nlive=1000,
                                            bound='multi',
                                            pool=pool, queue_size=nworkers, 
                                            logl_args=[dict_data])
@@ -356,7 +360,7 @@ if __name__ == "__main__":
     pool.join()
     results = sampler.results
 
-    save_directory = f'./dynesty_results_GMM_seed{seed}_sigma{sigma}_fitall'
+    save_directory = f'./dynesty_results_GMM_seed{seed}_sigma{sigma}_fixedLikelihood'
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
 
