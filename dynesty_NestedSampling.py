@@ -7,6 +7,8 @@ from tqdm import tqdm
 import astropy.units as u
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
+
+import scipy
 from scipy.interpolate import interp1d
 from scipy.stats import norm, truncnorm
 from sklearn.mixture import GaussianMixture
@@ -16,27 +18,9 @@ from orbit_evolution_potential import run, run_Gala
 ### Define Data ###
 def generate_data(data_type, sigma, ndim, seed=None):
 
-    if seed is None:
-
-        # 4 for potential
-        halo_mass = 1.05e11 # * u.Msun
-        Rs = 10 # * u.kpc
-        q_xy = 1.1
-        q_xz = 0.8
-
-        pos_init = [-33, 0, 0] # * u.kpc
-        vel_init = [-70, 45, -75] # * u.km/u.s
- 
-        time = 1.5 # * u.Gyr
-        
-        kx, ky, kz, tx, ty = 0, 0, 0, 0, 0
-
-        params = (halo_mass, Rs, q_xy, q_xz, pos_init[0], pos_init[1], pos_init[2], vel_init[0], vel_init[1], vel_init[2], time, kx, ky, kz, tx, ty)
-    
-    else:
-        np.random.seed(seed)
-        utheta = np.random.rand(ndim)
-        params = prior_transform(utheta)
+    np.random.seed(seed)
+    utheta = np.random.rand(ndim)
+    params = prior_transform(utheta)
 
     ### Run ###
     clean_data = model(params)
@@ -57,68 +41,62 @@ def generate_data(data_type, sigma, ndim, seed=None):
 # Priors
 def prior_transform(utheta):
     # Unpack the unit cube values
-    u_halo_mass, u_Rs, u_flattening_xy, u_flattening_xz, \
+    u_halo_mass, u_Rs, u_flattening_xy, \
     u_pos_init_x, u_pos_init_y, u_pos_init_z, u_vel_init_x, u_vel_init_y, u_vel_init_z, \
-    u_t_end, u_kx, u_ky, u_kz, u_tx, u_ty = utheta
+    u_t_end, u_kx, u_ky, u_kz = utheta
 
-    M_min, M_max     = 1e11, 1e12
-    Rs_min, Rs_max   = 8, 12
-    qxy_min, qxy_max = 0.5, 1.5
-    qxz_min, qxz_max = 0.5, 1.5
+    logM_min, logM_max     = 11, 12
+    logRs_min, logRs_max   = 0.5, 1.5
+    q_min, q_max = 0.6, 1
+    
 
     x_pos_min, x_pos_max = -75, -25
-    y_pos_min, y_pos_max = -15, 15
+    y_pos_min, y_pos_max = -5, 5
     z_pos_min, z_pos_max = -75, 75
 
-    x_vel_min, x_vel_max = -100, 100
-    y_vel_min, y_vel_max = 0, 100
-    z_vel_min, z_vel_max = -100, 100
+    mean_vel = 0
+    std_vel  = 100
 
     t_end_min, t_end_max = 1, 3
+    
 
     # Transform each parameter
-    halo_mass     = M_min + u_halo_mass * (M_max - M_min) 
-    Rs = Rs_min + u_Rs * (Rs_max - Rs_min)  
-    flattening_xy = qxy_min + u_flattening_xy * (qxy_max-qxy_min)  
-    flattening_xz = qxz_min + u_flattening_xz * (qxz_max-qxz_min)  
-
+    logM  = logM_min + u_halo_mass * (logM_max - logM_min) 
+    logRs = logRs_min + u_Rs * (logRs_max - logRs_min)  
+    q     = q_min + u_flattening_xy * (q_max-q_min)  
+    
     pos_init_x = x_pos_min + u_pos_init_x * (x_pos_max - x_pos_min) 
     pos_init_y = y_pos_min + u_pos_init_y * (y_pos_max - y_pos_min) 
     pos_init_z = z_pos_min + u_pos_init_z * (z_pos_max - z_pos_min) 
 
-    vel_init_x = x_vel_min + u_vel_init_x * (x_vel_max - x_vel_min) 
-    vel_init_y = y_vel_min + u_vel_init_y * (y_vel_max - y_vel_min) 
-    vel_init_z = z_vel_min + u_vel_init_z * (z_vel_max - z_vel_min) 
+    vel_init_x = norm.ppf(u_vel_init_x, loc=mean_vel, scale=std_vel)
+    vel_init_y = abs( norm.ppf(u_vel_init_y, loc=mean_vel, scale=std_vel) )
+    vel_init_z = norm.ppf(u_vel_init_z, loc=mean_vel, scale=std_vel)
 
     t_end = t_end_min + u_t_end * (t_end_max - t_end_min)
 
-    # Already uniform from [0,1]
-
     kx = norm.ppf(u_kx, loc=0, scale=1)
     ky = norm.ppf(u_ky, loc=0, scale=1)
-    kz = norm.ppf(u_kz, loc=0, scale=1)
-
-    tx = norm.ppf(u_tx, loc=0, scale=1)
-    ty = norm.ppf(u_ty, loc=0, scale=1)
+    kz = abs( norm.ppf(u_kz, loc=0, scale=1) )
 
     # Return the transformed parameters
-    return (halo_mass, Rs, flattening_xy, flattening_xz,
+    return (logM, logRs, q,
             pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z,
-            t_end, kx, ky, kz, tx, ty)
+            t_end, kx, ky, kz)
 
 # Model
 def model(params):
     # Unpack parameters
-    halo_mass, Rs, flattening_xy, flattening_xz, \
+    logM, logRs, q, \
     pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z, \
-    t_end, kx, ky, kz, tx, ty = params
+    t_end, kx, ky, kz = params
 
     # Repack some of the parameters to match the expected input format of your 'run' function
     pos_init = np.array([pos_init_x, pos_init_y, pos_init_z]) * u.kpc
     vel_init = np.array([vel_init_x, vel_init_y, vel_init_z]) * u.km/u.s
 
     # Call your 'run' function
-    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(halo_mass*u.Msun, Rs*u.kpc, flattening_xy, flattening_xz, t_end*u.Gyr, pos_init, vel_init, kx, ky, kz, tx, ty)
+    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(10**logM*u.Msun, 10**logRs*u.kpc, q, t_end*u.Gyr, pos_init, vel_init, kx, ky, kz)
     test_pos = orbit_pos_p.T[:2].value 
 
     x_pos, y_pos = test_pos[0], test_pos[1]
@@ -337,9 +315,10 @@ def log_likelihood_fixed(params, dict_data):
 if __name__ == "__main__":
     # Generate Data
     
-    ndim = 16  # Number of dimensions (parameters)
-    seed = 839
+    ndim  = 13  # Number of dimensions (parameters)
+    seed  = 340
     sigma = 3
+    nlive = 1000
     clean_data, dirty_data, theo_params = generate_data(data_type='xy', sigma=sigma, ndim=ndim, seed=seed)
     dict_data = {'clean_data': clean_data, 'dirty_data': dirty_data, 'sigma': sigma}
 
@@ -351,16 +330,17 @@ if __name__ == "__main__":
                                            prior_transform, 
                                            sample='rslice',
                                            ndim=ndim, 
-                                           nlive=1000,
+                                           nlive=nlive,
                                            bound='multi',
                                            pool=pool, queue_size=nworkers, 
                                            logl_args=[dict_data])
+    
     sampler.run_nested()
     pool.close()
     pool.join()
     results = sampler.results
 
-    save_directory = f'./dynesty_results_GMM_seed{seed}_sigma{sigma}_fixedLikelihood'
+    save_directory = f'./dynesty_results_GMM_seed{seed}_sigma{sigma}_ndim{ndim}_nlive{nlive}'
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
 

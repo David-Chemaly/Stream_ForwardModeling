@@ -364,10 +364,19 @@ def RodriguezRotation(kx, ky, kz, tx, ty):
 
     return  np.identity(3) + np.sin(theta)*K + (1-np.cos(theta))*K@K
 
-def run_Gala(mass_halo, r_s, q_xy, q_xz, 
+def get_mat(x, y, z):
+    v1 = np.array([0, 0, 1])
+    v2 = np.array([x, y, z])
+    v2 = v2 / np.sum(v2**2)**.5
+    angle = np.arccos(np.sum(v1 * v2))
+    v3 = np.cross(v1, v2)
+    v3 = v3 / np.sum(v3**2)**.5
+    return Rotation.from_rotvec(angle * v3).as_matrix()
+
+def run_Gala(mass_halo, r_s, q, 
              t_end, 
              pos_p, vel_p, 
-             kx, ky, kz, tx, ty,
+             kx, ky, kz,
              mass_plummer = 1e8 * u.Msun, 
              r_plummer = 1 * u.kpc, 
              N_time = 100,
@@ -375,10 +384,11 @@ def run_Gala(mass_halo, r_s, q_xy, q_xz,
              factor = 1.5):
 
     # Rotate
-    rot_mat = RodriguezRotation(kx, ky, kz, tx, ty)
+    # rot_mat = RodriguezRotation(kx, ky, kz, tx, ty)
+    rot_mat = get_mat(kx, ky, kz)
 
     # Define Main Halo Potential
-    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=rot_mat)
+    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=1, c=q, units=galactic, origin=None, R=rot_mat)
 
     # Define Time
     time = np.linspace(0, t_end.value, N_time) # * u.Gyr
@@ -414,7 +424,7 @@ def run_Gala(mass_halo, r_s, q_xy, q_xz,
         if i % step_N == 0 and N != 0:
             j = i//step_N
 
-            no_rot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=q_xy, c=q_xz, units=galactic, origin=None, R=None)
+            no_rot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=1, c=q, units=galactic, origin=None, R=None)
             rt     = get_rt(wp, no_rot_NFW, mass_plummer) * factor
             rp     = np.linalg.norm( wp.xyz )
             theta  = np.arccos(wp.z/rp)
