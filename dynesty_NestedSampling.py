@@ -316,6 +316,7 @@ if __name__ == "__main__":
     # Generate Data
     
     ndim  = 13  # Number of dimensions (parameters)
+    n_eff = 10000
     seed  = 340
     sigma = 3
     nlive = 1000
@@ -335,7 +336,7 @@ if __name__ == "__main__":
                                            pool=pool, queue_size=nworkers, 
                                            logl_args=[dict_data])
     
-    sampler.run_nested()
+    sampler.run_nested(n_effective=n_eff)
     pool.close()
     pool.join()
     results = sampler.results
