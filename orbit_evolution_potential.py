@@ -3,6 +3,7 @@ import numpy as np
 import astropy.units as u
 from tqdm import tqdm
 import sympy as sp
+import scipy
 from scipy.spatial.transform import Rotation
 
 import astropy.units as u
@@ -373,9 +374,51 @@ def get_mat(x, y, z):
     v3 = v3 / np.sum(v3**2)**.5
     return Rotation.from_rotvec(angle * v3).as_matrix()
 
-def run_Gala(mass_halo, r_s, q, 
+class MyWishart(scipy.stats._multivariate.wishart_gen):
+    def __init__(self, a,b,c,d,e,f, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Additional initialization if necessary
+        self.a = a
+        self.b = b
+        self.c = c
+        self.d = d
+        self.e = e
+        self.f = f
+
+    def _standard_rvs(self, n, shape, dim, df, random_state):
+        '''
+        Adapted from scipy
+        '''
+        # Random normal variates for off-diagonal elements from U(0,1)
+        n_tril = dim * (dim-1) // 2
+        covariances = np.array([self.a,
+                                self.b,
+                                self.c]).reshape(shape+(n_tril,))
+        
+        # Random chi-square variates for diagonal elements
+        variances = np.array([self.d,
+                              self.e,
+                              self.f]).reshape((dim,) + shape[::-1]).T
+                              
+        
+        # Create the A matri(ces) - lower triangular
+        A = np.zeros(shape + (dim, dim))
+
+        # Input the covariances
+        size_idx = tuple([slice(None, None, None)]*len(shape))
+        tril_idx = np.tril_indices(dim, k=-1)
+        A[size_idx + tril_idx] = covariances
+
+        # Input the variances
+        diag_idx = np.diag_indices(dim)
+        A[size_idx + diag_idx] = variances
+
+        return A
+
+def run_Gala(mass_halo, r_s, 
              t_end, 
              pos_p, vel_p, 
+             a, b, c,
              kx, ky, kz,
              mass_plummer = 1e8 * u.Msun, 
              r_plummer = 1 * u.kpc, 
@@ -384,11 +427,18 @@ def run_Gala(mass_halo, r_s, q,
              factor = 1.5):
 
     # Rotate
-    # rot_mat = RodriguezRotation(kx, ky, kz, tx, ty)
-    rot_mat = get_mat(kx, ky, kz)
+    df    = 3
+    scale = np.identity(df)
+
+    my_wishart = MyWishart(a,b,c,kx,ky,kz)
+    covariance_matrix = my_wishart.rvs(df, scale)
+    eigvals, eigvec   = scipy.linalg.eigh(covariance_matrix)
+
+    q1, q2, q3 = eigvals
+    rot_mat = eigvec
 
     # Define Main Halo Potential
-    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=1, b=1, c=q, units=galactic, origin=None, R=rot_mat)
+    pot_NFW = gp.NFWPotential(mass_halo, r_s, a=q1, b=q2, c=q3, units=galactic, origin=None, R=rot_mat)
 
     # Define Time
     time = np.linspace(0, t_end.value, N_time) # * u.Gyr

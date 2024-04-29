@@ -10,7 +10,7 @@ from multiprocessing import Pool
 
 import scipy
 from scipy.interpolate import interp1d
-from scipy.stats import norm, truncnorm
+from scipy.stats import norm, truncnorm, chi2
 from sklearn.mixture import GaussianMixture
 
 from orbit_evolution_potential import run, run_Gala
@@ -41,15 +41,13 @@ def generate_data(data_type, sigma, ndim, seed=None):
 # Priors
 def prior_transform(utheta):
     # Unpack the unit cube values
-    u_halo_mass, u_Rs, u_flattening_xy, \
+    u_halo_mass, u_Rs, \
     u_pos_init_x, u_pos_init_y, u_pos_init_z, u_vel_init_x, u_vel_init_y, u_vel_init_z, \
-    u_t_end, u_kx, u_ky, u_kz = utheta
+    u_t_end, u_a, u_b, u_c, u_kx, u_ky, u_kz = utheta
 
     logM_min, logM_max     = 11, 12
-    logRs_min, logRs_max   = 0.5, 1.5
-    q_min, q_max = 0.6, 1
+    Rs_min, Rs_max         = 3, 30
     
-
     x_pos_min, x_pos_max = -75, -25
     y_pos_min, y_pos_max = -5, 5
     z_pos_min, z_pos_max = -75, 75
@@ -59,11 +57,9 @@ def prior_transform(utheta):
 
     t_end_min, t_end_max = 1, 3
     
-
     # Transform each parameter
     logM  = logM_min + u_halo_mass * (logM_max - logM_min) 
-    logRs = logRs_min + u_Rs * (logRs_max - logRs_min)  
-    q     = q_min + u_flattening_xy * (q_max-q_min)  
+    Rs    = Rs_min + u_Rs * (Rs_max - Rs_min)  
     
     pos_init_x = x_pos_min + u_pos_init_x * (x_pos_max - x_pos_min) 
     pos_init_y = y_pos_min + u_pos_init_y * (y_pos_max - y_pos_min) 
@@ -75,28 +71,33 @@ def prior_transform(utheta):
 
     t_end = t_end_min + u_t_end * (t_end_max - t_end_min)
 
-    kx = norm.ppf(u_kx, loc=0, scale=1)
-    ky = norm.ppf(u_ky, loc=0, scale=1)
-    kz = abs( norm.ppf(u_kz, loc=0, scale=1) )
+    a = norm.ppf(u_a, loc=0, scale=1)
+    b = norm.ppf(u_b, loc=0, scale=1)
+    c = norm.ppf(u_c, loc=0, scale=1)
+
+    df = 3
+    kx = chi2.ppf(u_kx, df-(0+1)+1)**0.5
+    ky = chi2.ppf(u_ky, df-(1+1)+1)**0.5
+    kz = chi2.ppf(u_kz, df-(2+1)+1)**0.5
 
     # Return the transformed parameters
-    return (logM, logRs, q,
+    return (logM, Rs,
             pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z,
-            t_end, kx, ky, kz)
+            t_end, a, b, c, kx, ky, kz)
 
 # Model
 def model(params):
     # Unpack parameters
-    logM, logRs, q, \
+    logM, Rs, \
     pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z, \
-    t_end, kx, ky, kz = params
+    t_end, a, b, c, kx, ky, kz = params
 
     # Repack some of the parameters to match the expected input format of your 'run' function
     pos_init = np.array([pos_init_x, pos_init_y, pos_init_z]) * u.kpc
     vel_init = np.array([vel_init_x, vel_init_y, vel_init_z]) * u.km/u.s
 
     # Call your 'run' function
-    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(10**logM*u.Msun, 10**logRs*u.kpc, q, t_end*u.Gyr, pos_init, vel_init, kx, ky, kz)
+    orbit_pos_p, orbit_pos_N, leading_arg, trailing_arg = run_Gala(10**logM*u.Msun, Rs*u.kpc, t_end*u.Gyr, pos_init, vel_init, a, b, c, kx, ky, kz)
     test_pos = orbit_pos_p.T[:2].value 
 
     x_pos, y_pos = test_pos[0], test_pos[1]
@@ -315,9 +316,9 @@ def log_likelihood_fixed(params, dict_data):
 if __name__ == "__main__":
     # Generate Data
     
-    ndim  = 13  # Number of dimensions (parameters)
+    ndim  = 15  # Number of dimensions (parameters)
     n_eff = 10000
-    seed  = 340
+    seed  = 3823
     sigma = 3
     nlive = 1000
     clean_data, dirty_data, theo_params = generate_data(data_type='xy', sigma=sigma, ndim=ndim, seed=seed)
