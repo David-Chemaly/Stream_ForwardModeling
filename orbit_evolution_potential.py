@@ -434,8 +434,8 @@ def run_Gala(mass_halo, r_s,
     covariance_matrix = my_wishart.rvs(df, scale)
     eigvals, eigvec   = scipy.linalg.eigh(covariance_matrix)
 
-    q1, q2, q3 = eigvals
-    rot_mat = eigvec
+    q1, q2, q3 = eigvals#**0.5
+    rot_mat    = eigvec
 
     # Define Main Halo Potential
     pot_NFW = gp.NFWPotential(mass_halo, r_s, a=q1, b=q2, c=q3, units=galactic, origin=None, R=rot_mat)
