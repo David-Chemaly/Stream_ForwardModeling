@@ -71,26 +71,6 @@ def prior_transform(utheta):
             pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z,
             t_end, kx, ky, kz)
 
-def log_likelihood(params, dict_data):
-
-    # Unpack the data
-    r_data     = dict_data['r']
-    theta_data = dict_data['theta']
-    sigma      = dict_data['sigma']
-
-    # Generate model predictions for the given parameters
-    x_model, y_model = model(params)
-
-    theta_model, r_model = get_ang(x_model, y_model)
-
-    f_model = get_interpol(theta_model, r_model)
-    r_fit   = f_model(theta_data)
-    
-    chi_squared = np.sum(((r_data - r_fit) / sigma) ** 2)
-    logl = -0.5 * chi_squared
-
-    return logl
-
 def log_likelihood_GMM(params, dict_data):
 
     # Unpack the data
@@ -166,17 +146,6 @@ def get_fixed_theta(x, y, NN):
     theta_y_data = f_y(gamma)
 
     return theta_x_data, theta_y_data
-
-def get_ang(x, y):
-    ang = np.arctan2(y, x)
-    R = (x**2 + y**2)**.5
-    ang = np.unwrap(ang)
-
-    return ang, R
-    
-def get_interpol(ang, R):
-    II = interp1d(ang, R, kind='linear', fill_value=BAD_VAL, bounds_error=False)
-    return II
     
 def get_mat(x, y, z):
     v1 = np.array([0, 0, 1])
@@ -210,14 +179,6 @@ if __name__ == "__main__":
                  'y': y_data + y_noise,
                  'sigma': sigma}
 
-    # r_data = np.sqrt(x_data**2 + y_data**2)
-    # theta_data = np.arctan2(y_data, x_data)
-    # sigma = 3
-    # noise = np.random.normal(0, sigma, len(r_data))
-    # dict_data = {'r': r_data + noise,
-    #              'theta': theta_data, 
-    #              'sigma': sigma}
-    
 
     # # Run and Save Dynesty
     # nworkers = os.cpu_count()
