@@ -109,7 +109,8 @@ def model(params, type='data'):
 
     my_wishart        = MyWishart(a,b,c,kx,ky,kz)
     covariance_matrix = my_wishart.rvs(df, scale)
-    eigvals, eigvec   = scipy.linalg.eigh(covariance_matrix)
+
+    eigvals, eigvec   = np.linalg.eigh(covariance_matrix)
 
     q1, q2, q3 = eigvals**0.5
     rot_mat    = eigvec
@@ -227,71 +228,67 @@ if __name__ == "__main__":
     
     ndim  = 15  # Number of dimensions (parameters)
     n_eff = 10000
-    seed  = 7345 #np.random.randint(0, 10000)
+    seed  = 2400 #np.random.randint(0, 10000) and 3832
     np.random.seed(seed)
     sigma = 3
     nlive = 1200
 
-    ### DATA ###
+    # ### DATA ###
     p0 = np.random.uniform(0, 1, size=ndim)
     theo_params = prior_transform(p0)
     x_data, y_data = model(theo_params, type='data')
 
-    sigma = 3
     x_noise = np.random.normal(0, sigma, len(x_data))
     y_noise = np.random.normal(0, sigma, len(y_data))
     dict_data = {'x': x_data + x_noise,
-                 'y': y_data + y_noise,
-                 'sigma': sigma}
+                'y': y_data + y_noise,
+                'sigma': sigma}
     
-    for i in range(10):
-        p      = np.random.uniform(0, 1, size=ndim)
-        params = prior_transform(p)
-        logl = log_likelihood_GMM(params, dict_data)
+    # for i in range(10):
+    #     p = np.random.uniform(0, 1, size=ndim)
+    #     params = prior_transform(p)
+    #     x, y = model(params, type='model')
+    #     llog = log_likelihood_GMM(params, dict_data)
+    #     plt.title(f'Log Likelihood: {llog}')
+    #     plt.scatter(dict_data['x'], dict_data['y'], c='b', label='Data')
+    #     plt.scatter(x, y, c='r', label='Model')
+    #     plt.xlabel(seed)
+    #     plt.show()
 
-        x_model, y_model = model(params, type='model')
+    # Run and Save Dynesty
+    nworkers = os.cpu_count()
+    pool = Pool(nworkers)
 
-        plt.title(f'logL = {logl}')
-        plt.scatter(x_model, y_model, s=25, c='k', label='Model')
-        plt.scatter(dict_data['x'], dict_data['y'], c='r', label='Data')
-        plt.scatter(0,0,c='green', s=10)
-        plt.legend(loc='upper right')
-        plt.show()
-
-    # # Run and Save Dynesty
-    # nworkers = os.cpu_count()
-    # pool = Pool(nworkers)
-
-    # sampler = dynesty.DynamicNestedSampler(log_likelihood,
-    #                                        prior_transform, 
-    #                                        sample='rslice',
-    #                                        ndim=ndim, 
-    #                                        nlive=nlive,
-    #                                        bound='multi',
-    #                                        pool=pool, queue_size=nworkers, 
-    #                                        logl_args=[dict_data])
+    sampler = dynesty.DynamicNestedSampler(log_likelihood_GMM,
+                                           prior_transform, 
+                                           sample='rslice',
+                                           ndim=ndim, 
+                                           nlive=nlive,
+                                           bound='multi',
+                                           pool=pool, queue_size=nworkers, 
+                                           logl_args=[dict_data])
     
-    # sampler.run_nested(n_effective=n_eff)
-    # pool.close()
-    # pool.join()
-    # results = sampler.results
+    sampler.run_nested(n_effective=n_eff)
+    pool.close()
+    pool.join()
+    results = sampler.results
 
-    # # save_directory = f'./dynesty_results_Sergey_GMM_seed{seed}_sigma{sigma}_ndim{ndim}_nlive{nlive}' 
-    # save_directory = f'./dynesty_results_Sergey_seed{seed}_sigma{sigma}_ndim{ndim}_nlive{nlive}' 
+    save_directory = f'./dynesty_test' 
+    # save_directory = f'./dynesty_results_Sergey_GMM_seed{seed}_sigma{sigma}_ndim{ndim}_nlive{nlive}_fixedtheta' 
 
-    # if not os.path.exists(save_directory):
-    #     os.makedirs(save_directory)
+    if not os.path.exists(save_directory):
+        os.makedirs(save_directory)
 
-    # # Save parameters
-    # params_file = os.path.join(save_directory, 'params.txt')
-    # np.savetxt(params_file, theo_params)
+    # Save parameters
+    params_file = os.path.join(save_directory, 'params.txt')
+    np.savetxt(params_file, theo_params)
 
-    # # Save Dynesty results to a pickle file within the directory
-    # results_file = os.path.join(save_directory, 'dynesty_results.pkl')
-    # with open(results_file, 'wb') as file:
-    #     pickle.dump(results, file)
+    # Save Dynesty results to a pickle file within the directory
+    results_file = os.path.join(save_directory, 'dynesty_results.pkl')
+    with open(results_file, 'wb') as file:
+        pickle.dump(results, file)
 
-    # # Save the dictionary of data to a pickle file within the directory
-    # data_file = os.path.join(save_directory, 'data_dict.pkl')
-    # with open(data_file, 'wb') as file:
-    #     pickle.dump(dict_data, file)
+    # Save the dictionary of data to a pickle file within the directory
+    data_file = os.path.join(save_directory, 'data_dict.pkl')
+    with open(data_file, 'wb') as file:
+        pickle.dump(dict_data, file)

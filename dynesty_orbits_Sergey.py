@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from multiprocessing import Pool
 
 import scipy
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, CubicSpline
 from scipy.stats import norm, truncnorm
 from scipy.spatial.transform import Rotation
 from sklearn.mixture import GaussianMixture
@@ -135,13 +135,20 @@ def model(params, type='data'):
     return x_fixed, y_fixed
 
 def get_fixed_theta(x, y, NN):
-    theta = np.unwrap( np.arctan2(y, x) )
+    r = np.sqrt(x**2 + y**2)
+    theta = np.unwrap(np.arctan2(y, x))
 
-    f_x = interp1d(theta, x, kind='linear')
-    f_y = interp1d(theta, y, kind='linear')
+    dtheta = abs(np.diff(theta))
+    rdtheta = np.cumsum( np.insert(r[:-1]*dtheta, 0, 0) )
 
-    gamma = np.linspace(theta.min(), theta.max(), NN)
+    # Fit cubic splines for x and y as functions of theta
+    f_x = CubicSpline(rdtheta, x)
+    f_y = CubicSpline(rdtheta, y)
 
+    # Generate gamma values, which are evenly spaced theta values for interpolation
+    gamma = np.linspace(rdtheta.min(), rdtheta.max(), NN)
+
+    # Evaluate the cubic splines at the gamma values
     theta_x_data = f_x(gamma)
     theta_y_data = f_y(gamma)
 
@@ -167,18 +174,22 @@ if __name__ == "__main__":
     nlive = 1200
 
     ### DATA ###
-    theo_params = np.array([11.5, 12, 0.8, 
-                            -60, 0, 0, 0, 100, 0, 
-                            1.2, 0., 1., 1.])
+    theo_params = np.array([12., 24., 0.92, 
+                            -73., 3., -12., 
+                            -200, 70., 121., 
+                            1.4, 
+                            0.55, 1.2, 1.5])
     x_data, y_data = model(theo_params, type='data')
 
     sigma = 3
     x_noise = np.random.normal(0, sigma, len(x_data))
     y_noise = np.random.normal(0, sigma, len(y_data))
     dict_data = {'x': x_data + x_noise,
-                 'y': y_data + y_noise,
-                 'sigma': sigma}
-
+                'y': y_data + y_noise,
+                'sigma': sigma}
+    
+    plt.scatter(x_data, y_data, c='r', label='Data')
+    plt.show()
 
     # # Run and Save Dynesty
     # nworkers = os.cpu_count()
@@ -218,19 +229,19 @@ if __name__ == "__main__":
     # with open(data_file, 'wb') as file:
     #     pickle.dump(dict_data, file)
 
-    for i in range(10):
-        p      = np.random.uniform(0, 1, size=ndim)
-        params = prior_transform(p)
-        logl = log_likelihood_GMM(params, dict_data)
+    # for i in range(10):
+    #     p      = np.random.uniform(0, 1, size=ndim)
+    #     params = prior_transform(p)
+    #     logl = log_likelihood_GMM(params, dict_data)
 
-        x_model, y_model = model(params, type='model')
+    #     x_model, y_model = model(params, type='model')
 
-        plt.title(f'logL = {logl}')
-        plt.scatter(x_model, y_model, s=25, c='k', label='Model')
-        plt.scatter(x_data, y_data, c='r', label='Data')
-        plt.scatter(0,0,c='green', s=10)
-        plt.legend(loc='upper right')
-        plt.show()
+    #     plt.title(f'logL = {logl}')
+    #     plt.scatter(x_model, y_model, s=25, c='k', label='Model')
+    #     plt.scatter(x_data, y_data, c='r', label='Data')
+    #     plt.scatter(0,0,c='green', s=10)
+    #     plt.legend(loc='upper right')
+    #     plt.show()
 
 
         # angRes = get_ang(x_model, y_model)
