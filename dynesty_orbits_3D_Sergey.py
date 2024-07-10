@@ -2,11 +2,13 @@ import os
 import h5py
 import pickle
 import dynesty
+import argparse
 import numpy as np
 from tqdm import tqdm
 import astropy.units as u
 import matplotlib.pyplot as plt
 from multiprocessing import Pool
+from dynesty import plotting as dyplot
 
 import scipy
 from scipy.interpolate import interp1d, CubicSpline
@@ -95,14 +97,7 @@ def log_likelihood_GMM(params, dict_data):
 
     return logl
 
-def model(params, type='data'):
-    # Unpack parameters
-    logM, Rs, \
-    pos_init_x, pos_init_y, pos_init_z, \
-    vel_init_x, vel_init_y, vel_init_z, \
-    t_end, \
-    a, b, c, kx, ky, kz = params
-
+def spheroid_params(a, b, c, kx, ky, kz):
     # Wishart Prior
     df    = 3
     scale = np.identity(df)
@@ -114,6 +109,18 @@ def model(params, type='data'):
 
     q1, q2, q3 = eigvals**0.5
     rot_mat    = eigvec
+
+    return q1, q2, q3, rot_mat
+
+def model(params, type='data'):
+    # Unpack parameters
+    logM, Rs, \
+    pos_init_x, pos_init_y, pos_init_z, \
+    vel_init_x, vel_init_y, vel_init_z, \
+    t_end, \
+    a, b, c, kx, ky, kz = params
+
+    q1, q2, q3, rot_mat = spheroid_params(a, b, c, kx, ky, kz)
 
     pot_NFW = gp.NFWPotential(10**logM, Rs, a=q1, b=q2, c=q3, units=galactic, origin=None, R=rot_mat)
 
@@ -224,11 +231,17 @@ def get_mat(x, y, z):
     return Rotation.from_rotvec(angle * v3).as_matrix()
 
 if __name__ == "__main__":
-    # Generate Data
-    
+    PATH_SAVE = '/data/dc824-2/orbit_to_orbit_fit_3D'
+
+    parser = argparse.ArgumentParser(description='Hyperparameter')
+    parser.add_argument('--seed', type=int, default=42, help='Seed for data generation')
+    args = parser.parse_args()
+    seed = args.seed
+
     ndim  = 15  # Number of dimensions (parameters)
     n_eff = 10000
-    seed  = 2400 #np.random.randint(0, 10000) and 3832
+    # seed =  np.random.randint(0, 10000) #4773, 1701
+    print(seed)
     np.random.seed(seed)
     sigma = 3
     nlive = 1200
@@ -243,17 +256,11 @@ if __name__ == "__main__":
     dict_data = {'x': x_data + x_noise,
                 'y': y_data + y_noise,
                 'sigma': sigma}
-    
-    # for i in range(10):
-    #     p = np.random.uniform(0, 1, size=ndim)
-    #     params = prior_transform(p)
-    #     x, y = model(params, type='model')
-    #     llog = log_likelihood_GMM(params, dict_data)
-    #     plt.title(f'Log Likelihood: {llog}')
-    #     plt.scatter(dict_data['x'], dict_data['y'], c='b', label='Data')
-    #     plt.scatter(x, y, c='r', label='Model')
-    #     plt.xlabel(seed)
-    #     plt.show()
+
+    # plt.scatter(dict_data['x'], dict_data['y'])
+    # plt.scatter(x_data, y_data)
+    # plt.title(seed)
+    # plt.savefig('./test.png')
 
     # Run and Save Dynesty
     nworkers = os.cpu_count()
@@ -273,8 +280,7 @@ if __name__ == "__main__":
     pool.join()
     results = sampler.results
 
-    save_directory = f'./dynesty_test' 
-    # save_directory = f'./dynesty_results_Sergey_GMM_seed{seed}_sigma{sigma}_ndim{ndim}_nlive{nlive}_fixedtheta' 
+    save_directory = f'{PATH_SAVE}/dynesty_results_GMM_seed{seed}_sigma{sigma}_ndim{ndim}_nlive{nlive}' 
 
     if not os.path.exists(save_directory):
         os.makedirs(save_directory)
@@ -292,3 +298,136 @@ if __name__ == "__main__":
     data_file = os.path.join(save_directory, 'data_dict.pkl')
     with open(data_file, 'wb') as file:
         pickle.dump(dict_data, file)
+
+    # Plot a subset of parameters
+    labels = [r'logM$_{halo}$', r'R$_s$', r'x$_0$', r'y$_0$', r'z$_0$', r'v$_x$', r'v$_y$', r'v$_z$', 'time', 'a', 'b', 'c', r'k$_1$', r'k$_2$', r'k$_3$' ]
+
+    # Plot the posteriors
+    fig, axes = dyplot.cornerplot(results, 
+                                  color='black',
+                                  truths=theo_params, 
+                                  truth_color='red',
+                                  labels=labels, 
+                                  max_n_ticks=5,
+                                  show_titles=True)
+    plt.savefig(f'{save_directory}/posteriors.png')
+
+    # Extract weighted samples
+    samples = results.samples
+    weights = np.exp(results.logwt - results.logz[-1])
+
+    # Compute the weighted mean of the samples
+    mean_fit_params = np.sum(samples * weights.reshape(-1, 1), axis=0) / np.sum(weights)
+
+    # Compute the maximum log-likelihood
+    max_logl_index = np.argmax(results.logl)
+    max_logl_sample = results.samples[max_logl_index]
+    max_logl_value = results.logl[max_logl_index]
+
+    max_fit  = model(max_logl_sample)
+    theo_fit = model(theo_params)
+
+    x_data, y_data = dict_data['x'], dict_data['y']
+
+    # Plot the best fit
+    plt.figure(figsize=(15,5))
+    plt.subplot(1,2,1)
+    plt.xlabel(r'x [kpc]', fontsize=15)
+    plt.ylabel(r'y [kpc]', fontsize=15)
+    plt.title(f'MAP: {log_likelihood_GMM(max_logl_sample, dict_data)}')
+    plt.scatter(x_data, y_data)
+    plt.scatter(max_fit[0], max_fit[1])
+    plt.scatter(0,0, c='k', s=100)
+    plt.subplot(1,2,2)
+    plt.title(f'True: {log_likelihood_GMM(theo_params, dict_data)}')
+    plt.scatter(x_data, y_data)
+    plt.scatter(theo_fit[0], theo_fit[1])
+    
+    plt.scatter(0,0, c='k', s=100)
+
+    plt.xlabel(r'x [kpc]', fontsize=15)
+    plt.ylabel(r'y [kpc]', fontsize=15)
+    plt.savefig(f'{save_directory}/best_fit.png')
+
+    # Plot the flattening parameters
+    a_true, b_true, c_true, k1_true, k2_true, k3_true = theo_params[9:]
+    a_fits, b_fits, c_fits, k1_fits, k2_fits, k3_fits = results['samples'][:, 9:].T
+
+    a_prior, b_prior, c_prior    = np.random.normal(0, 1, (3,len(a_fits)))
+    df = 3
+    scale = np.eye(3)
+    k1_prior = np.random.chisquare(df-0, size=len(a_fits))**0.5
+    k2_prior = np.random.chisquare(df-1, size=len(a_fits))**0.5 
+    k3_prior = np.random.chisquare(df-2, size=len(a_fits))**0.5
+
+
+    all_q1_fits, all_q2_fits, all_q3_fits = [], [], []
+    all_q1_prior, all_q2_prior, all_q3_prior = [], [], []
+    for i in range(len(a_fits)):
+        fits_my_wishart = MyWishart(a_fits[i],b_fits[i],c_fits[i],k1_fits[i],k2_fits[i],k3_fits[i])
+        fits_covariance_matrix = fits_my_wishart.rvs(df, scale)
+        fits_eigvals, _  = scipy.linalg.eigh(fits_covariance_matrix)
+
+        q1_fits, q2_fits, q3_fits = fits_eigvals
+
+        all_q1_fits.append(q1_fits)
+        all_q2_fits.append(q2_fits)
+        all_q3_fits.append(q3_fits)
+
+        prior_my_wishart = MyWishart(a_prior[i],b_prior[i],c_prior[i],k1_prior[i],k2_prior[i],k3_prior[i])
+        prior_covariance_matrix = prior_my_wishart.rvs(df, scale)
+        prior_eigvals, _  = scipy.linalg.eigh(prior_covariance_matrix)
+
+        q1_prior, q2_prior, q3_prior = prior_eigvals
+
+        all_q1_prior.append(q1_prior)
+        all_q2_prior.append(q2_prior)
+        all_q3_prior.append(q3_prior)
+
+    all_q1_prior = np.array(all_q1_prior)**0.5
+    all_q2_prior = np.array(all_q2_prior)**0.5
+    all_q3_prior = np.array(all_q3_prior)**0.5
+
+    all_q1_fits = np.array(all_q1_fits)**0.5
+    all_q2_fits = np.array(all_q2_fits)**0.5
+    all_q3_fits = np.array(all_q3_fits)**0.5
+
+    true_my_wishart = MyWishart(a_true,b_true,c_true,k1_true,k2_true,k3_true)
+    true_covariance_matrix = true_my_wishart.rvs(df, scale)
+    true_eigvals, _   = scipy.linalg.eigh(true_covariance_matrix)
+    q1_true, q2_true, q3_true = true_eigvals**0.5
+
+    # distribution of major axes
+    plt.figure(figsize=(20,5))
+    plt.subplot(1,3,1)
+    plt.xlabel(r'q$_1$', fontsize=15)
+    plt.ylabel('Counts', fontsize=15)
+    plt.hist(all_q1_prior, bins=10, color='b', alpha=.2)
+    plt.hist(all_q1_fits, bins=10, color='b')
+    plt.axvline(np.mean(all_q1_fits), c='black')
+    plt.axvline(np.mean(all_q1_fits)-np.std(all_q1_fits), c='black',linestyle='--')
+    plt.axvline(np.mean(all_q1_fits)+np.std(all_q1_fits), c='black',linestyle='--')
+    plt.axvline(q1_true, c='r')
+
+    plt.subplot(1,3,2)
+    plt.xlabel(r'q$_2$', fontsize=15)
+    plt.ylabel('Counts', fontsize=15)
+    plt.hist(all_q2_prior, bins=10, color='b', alpha=.2)
+    plt.hist(all_q2_fits, bins=10, color='b')
+    plt.axvline(np.mean(all_q2_fits), c='black')
+    plt.axvline(np.mean(all_q2_fits)-np.std(all_q2_fits), c='black',linestyle='--')
+    plt.axvline(np.mean(all_q2_fits)+np.std(all_q2_fits), c='black',linestyle='--')
+    plt.axvline(q2_true, c='r')
+
+
+    plt.subplot(1,3,3)
+    plt.xlabel(r'q$_3$', fontsize=15)
+    plt.ylabel('Counts', fontsize=15)
+    plt.hist(all_q3_prior, bins=10, color='b', alpha=.2, label = 'Prior')
+    plt.hist(all_q3_fits, bins=10, color='b', label = 'Posteroir')
+    plt.axvline(np.mean(all_q3_fits), c='k', label='Mean')
+    plt.axvline(np.mean(all_q3_fits)-np.std(all_q3_fits), c='k',linestyle='--', label=f'$\pm$1$\sigma$')
+    plt.axvline(np.mean(all_q3_fits)+np.std(all_q3_fits), c='k',linestyle='--')
+    plt.axvline(q3_true, c='r', label = 'True')
+    plt.legend(loc='upper right')
+    plt.savefig(f'{save_directory}/flattening_posteriors.png')

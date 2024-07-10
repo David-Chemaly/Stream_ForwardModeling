@@ -19,6 +19,7 @@ _ = coord.galactocentric_frame_defaults.set('v4.0')
 import scipy
 from scipy.stats import norm, chi2
 from scipy.integrate import quad
+from sklearn.mixture import GaussianMixture
 
 ### Prior transform function ###
 def prior_transform(utheta):
@@ -34,9 +35,8 @@ def prior_transform(utheta):
     logm_min, logm_max     = 7, 8
     rs_min, rs_max         = 1, 10
 
-    x_pos_min, x_pos_max = -75, -25
-    y_pos_min, y_pos_max = -5, 5
-    z_pos_min, z_pos_max = -75, 75
+    mean_pos = 0
+    std_pos = 100
 
     mean_vel = 0
     std_vel  = 100
@@ -50,12 +50,12 @@ def prior_transform(utheta):
     logm  = logm_min + u_logm * (logm_max - logm_min) 
     rs    = rs_min + u_rs * (rs_max - rs_min)  
 
-    pos_init_x = x_pos_min + u_pos_init_x * (x_pos_max - x_pos_min) 
-    pos_init_y = y_pos_min + u_pos_init_y * (y_pos_max - y_pos_min) 
-    pos_init_z = z_pos_min + u_pos_init_z * (z_pos_max - z_pos_min) 
+    pos_init_x = norm.ppf(u_pos_init_x, loc=mean_pos, scale=std_pos)
+    pos_init_y = norm.ppf(u_pos_init_y, loc=mean_pos, scale=std_pos)
+    pos_init_z = norm.ppf(u_pos_init_z, loc=mean_pos, scale=std_pos)
 
     vel_init_x = norm.ppf(u_vel_init_x, loc=mean_vel, scale=std_vel)
-    vel_init_y = abs( norm.ppf(u_vel_init_y, loc=mean_vel, scale=std_vel) )
+    vel_init_y = norm.ppf(u_vel_init_y, loc=mean_vel, scale=std_vel) 
     vel_init_z = norm.ppf(u_vel_init_z, loc=mean_vel, scale=std_vel)
 
     t_end = t_end_min + u_t_end * (t_end_max - t_end_min)
@@ -106,30 +106,67 @@ def log_likelihood_gaussians(params, dict_data):
 
     return likelihood
 
-def model(params):
-    # Unpack parameters
-    logM, Rs, logm, rs, \
-    pos_init_x, pos_init_y, pos_init_z, vel_init_x, vel_init_y, vel_init_z, \
-    t_end, a, b, c, kx, ky, kz = params
+def log_likelihood_GMM(params, dict_data):
 
-    # Get the covariance matrix
+    # Unpack the data
+    x_data = dict_data['x']
+    y_data = dict_data['y']
+    sigma  = dict_data['sigma']
+
+    # Generate model predictions for the given parameters
+    x_model, y_model = model(params)
+
+    gmm = GaussianMixtureModel(x_model, y_model, sigma)
+
+    samples = np.concatenate((x_data[:, None], y_data[:, None]), axis=1)
+    logl    = np.sum( gmm.score_samples(samples) )
+
+    return logl
+
+def GaussianMixtureModel(x, y, sigma):
+    means = np.concatenate( (x[:, None], y[:, None]), axis=1)
+
+    dim = 2
+    covariances = np.zeros((len(means), dim, dim)) + np.identity(dim)
+    covariances[:,0,0] = sigma**2
+    covariances[:,1,1] = sigma**2
+
+    weights = np.zeros(len(means)) + 1/len(means) 
+    weights /= weights.sum()
+
+    gmm = GaussianMixture(n_components=len(means), covariance_type='full')
+    gmm.weights_ = weights
+    gmm.means_ = means
+    gmm.covariances_ = covariances
+    gmm.precisions_cholesky_ = np.linalg.cholesky(np.linalg.inv(covariances))
+
+    return gmm
+
+def spheroid_params(a, b, c, kx, ky, kz):
+    # Wishart Prior
     df    = 3
     scale = np.identity(df)
 
     my_wishart        = MyWishart(a,b,c,kx,ky,kz)
     covariance_matrix = my_wishart.rvs(df, scale)
-    eigvals, eigvec   = scipy.linalg.eigh(covariance_matrix)
 
-    # Get Flattening and Orientation
+    eigvals, eigvec   = np.linalg.eigh(covariance_matrix)
+
     q1, q2, q3 = eigvals**0.5
     rot_mat    = eigvec
 
-    # Repack some of the parameters to match the expected input format of your 'run' function
-    pos_init = np.array([pos_init_x, pos_init_y, pos_init_z]) * u.kpc
-    vel_init = np.array([vel_init_x, vel_init_y, vel_init_z]) * u.km/u.s
+    return q1, q2, q3, rot_mat
 
+def model(params):
+    # Unpack parameters
+    logM, Rs, logm, rs, \
+    x0, y0, z0, vx0, vy0, vz0, \
+    t_end, a, b, c, kx, ky, kz = params
+
+    q1, q2, q3, rot_mat = spheroid_params(a, b, c, kx, ky, kz)
+    
     # Run the stream generator
-    stream_x, stream_y = stream_gen_Gala(logM, Rs*u.kpc, q1, q2, q3, logm, rs*u.kpc, pos_init, vel_init, rot_mat, t_end*u.Gyr)
+    stream_x, stream_y = stream_gen_Gala(logM, Rs*u.kpc, q1, q2, q3, logm, rs*u.kpc, x0, y0, z0, vx0, vy0, vz0, t_end, rot_mat)
 
     return stream_x, stream_y
 
@@ -177,23 +214,25 @@ class MyWishart(scipy.stats._multivariate.wishart_gen):
 def stream_gen_Gala(logM, Rs,
                     q1, q2, q3,
                     logm, rs,
-                    pos_p, vel_p, 
+                    x0, y0, z0,
+                    vx0, vy0, vz0,
+                    time, 
                     rot_matrix,
-                    time, dt = 1*u.Myr):
+                    dt = 1*u.Myr):
     
     pot = gp.NFWPotential(10**logM*u.Msun, 
                           Rs, 
-                          a=q1, b=q2, c=q3, 
+                          a=1, b=q2/q3, c=q1/q3, 
                           units=galactic, 
                           origin=None, 
-                          R=rot_matrix)
+                          R=None)
 
     H = gp.Hamiltonian(pot)
 
-    prog_w0 = gd.PhaseSpacePosition(pos=pos_p,
-                                    vel=vel_p)
+    prog_w0 = gd.PhaseSpacePosition(pos=np.array([x0, y0, z0]) * u.kpc,
+                                    vel=np.array([vx0, vy0, vz0]) * u.km/u.s)
 
-    df = ms.FardalStreamDF(gala_modified=True, lead=True, trail=False)
+    df = ms.FardalStreamDF(gala_modified=True, lead=True, trail=True)
 
     prog_pot = gp.PlummerPotential(m=10**logm*u.Msun, 
                                    b=rs, 
@@ -201,12 +240,16 @@ def stream_gen_Gala(logM, Rs,
 
     gen = ms.MockStreamGenerator(df, H, progenitor_potential=prog_pot)
 
+    orbit = pot.integrate_orbit(prog_w0, dt=dt, n_steps=(time*u.Gyr)//dt)
     stream, _ = gen.run(prog_w0, 
                         10**logm*u.Msun,
                         dt=dt, 
-                        n_steps=time//dt)
+                        n_steps=(time*u.Gyr)//dt)
     
-    return stream.x.value, stream.y.value
+    x_stream, y_stream, _ = rot_matrix @ stream.xyz.value
+    x_orbti, y_orbit, _ = rot_matrix @ orbit.xyz.value
+
+    return x_orbti, y_orbit, x_stream, y_stream
 
 # Function to compute the overlapping area of two Gaussian distributions
 def overlap_area(mu1, sigma1, mu2, sigma2):
