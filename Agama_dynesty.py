@@ -12,6 +12,7 @@ import numpy as np
 from tqdm import tqdm
 import astropy.units as u
 import matplotlib.pyplot as plt
+plt.rcParams.update({'font.size': 16})
 from multiprocessing import Pool
 from dynesty import plotting as dyplot
 
@@ -34,8 +35,17 @@ from gala.units import galactic
 
 from Agama_stream import Agama_stream
 
-BAD_VAL = -1e-100
+BAD_VAL = -1e50
 
+### Unwrap function ###
+def unwrap(r, theta, gamma):
+    theta[theta < 0] += 2*np.pi
+    unwrapped_theta = np.unwrap(theta)
+    if np.any(unwrapped_theta < 0):
+        return np.flip(r), np.unwrap(np.flip(theta)), np.flip(gamma)
+    else:
+        return r, unwrapped_theta, gamma
+    
 ### Prior transform function ###
 def prior_transform(utheta):
     # Unpack the unit cube values
@@ -63,8 +73,10 @@ def prior_transform(utheta):
     # Transform each parameter
     logM  = logM_min + u_logM * (logM_max - logM_min) 
     Rs    = Rs_min + u_Rs * (Rs_max - Rs_min)  
-    p     = 1 - np.sqrt(u_p)*u_q  
-    q     = 1 - np.sqrt(u_p)      
+    p = u_p
+    q = u_q
+    # p     = 1 - np.sqrt(u_p)*u_q  
+    # q     = 1 - np.sqrt(u_p)      
 
     logm  = logm_min + u_logm * (logm_max - logm_min)
     rs    = rs_min + u_rs * (rs_max - rs_min)
@@ -111,15 +123,19 @@ def get_rot_mat(x1, x2, x3):
 def log_likelihood_MSE(params, dict_data):
 
     # Generate model predictions for the given parameters
-    _, xy_model = model(params)
-    r_model = np.sqrt(xy_model[0]**2 + xy_model[1]**2)
-    theta_model = np.unwrap(np.arctan2(xy_model[1], xy_model[0]))
+    _, xy_model, _, _ = model(params)
+    r_model     = np.sqrt(xy_model[0]**2 + xy_model[1]**2)
+    theta_model = np.arctan2(xy_model[1], xy_model[0])
+    r_model, theta_model, _ = unwrap(r_model, theta_model, None)
 
-    f = interp1d(theta_model, r_model, kind='cubic', fill_value='extrapolate')
+    f = interp1d(theta_model, r_model, kind='cubic', bounds_error=False, fill_value=np.nan)
     r_fit = f(dict_data['theta'])
 
-    # Compute the chi-squared
-    logl = -np.sum((dict_data['r'] - r_fit)**2)/dict_data['sigma']**2
+    N_nan = np.sum(np.isnan(r_fit))
+    if N_nan > 0:
+        logl = BAD_VAL * N_nan
+    else:
+        logl = -0.5*np.sum( (dict_data['r'] - r_fit)**2/dict_data['r_sigma']**2 + np.log(dict_data['r_sigma']**2) )
 
     return logl
 
@@ -141,29 +157,94 @@ def model(params, N_track=100, N_stars=500, Nbody=True, seed=True):
                         t_end, rot_mat, 
                         N_track=N_track, N_stars=N_stars, Nbody=Nbody, seed=seed)
     
+def get_data(ndim, N_data=20, seed=False, min_length=10, max_length=100, min_theta=np.pi/2, max_theta=5*np.pi/2):
+
+    d_length = 0
+    theta_length = 0
+    theta_track_data = np.array([0])
+    while d_length < min_length or theta_length < min_theta or max_length < d_length or max_theta < theta_length or np.any( np.diff(theta_track_data) < 0): 
+
+        if seed:
+            params_data = np.array([12, 15, 0.9, 0.8, 8, 1, -40, 0, 0, 0, 150, 0, 2, 0.5, 0.2, 0.7])
+        else:
+            p = np.random.uniform(0, 1, ndim)
+            params_data = prior_transform(p)
+
+        xy_stream_data, xy_track_data, gamma, gamma_track = model(params_data, N_stars=500, Nbody=False, seed=False)
+        r_stream_data = np.sqrt(xy_stream_data[0]**2 + xy_stream_data[1]**2)
+        r_track_data = np.sqrt(xy_track_data[0]**2 + xy_track_data[1]**2)
+        theta_track_data = np.arctan2(xy_track_data[1], xy_track_data[0])
+        r_track_data, theta_track_data, gamma_track = unwrap(r_track_data, theta_track_data, gamma_track)
+
+        arc_lengths = abs(r_track_data[:-1] * np.diff(theta_track_data))
+        cumulative_arc_lengths = np.concatenate([[0], np.cumsum(arc_lengths)])
+        d_length     = cumulative_arc_lengths[-1]
+        theta_length = abs(theta_track_data.max() - theta_track_data.min())
+
+    # Get full N-body data
+    xy_stream_data, xy_track_data, gamma, gamma_track = model(params_data, N_stars=10000, Nbody=True, seed=False)
+    r_stream_data = np.sqrt(xy_stream_data[0]**2 + xy_stream_data[1]**2)
+    r_track_data = np.sqrt(xy_track_data[0]**2 + xy_track_data[1]**2)
+    theta_track_data = np.arctan2(xy_track_data[1], xy_track_data[0])
+    r_track_data, theta_track_data, gamma_track = unwrap(r_track_data, theta_track_data, gamma_track)
+
+    d = d_length/N_data  # kpc -- Desired fixed distance
+    fixed_distances = np.arange(d, cumulative_arc_lengths[-1]-d, d)
+
+    interp_theta = interp1d(cumulative_arc_lengths, theta_track_data, kind='cubic')
+    interp_gamma = interp1d(cumulative_arc_lengths, gamma_track, kind='cubic')
+    theta_data = interp_theta(fixed_distances)
+    gamma_data = interp_gamma(fixed_distances)
+
+    f = interp1d(theta_track_data, r_track_data, kind='cubic')
+    r_data = f(theta_data)
+
+    N_data  = []
+    N_pred  = []
+    r_sigma = []
+    for i in range(len(gamma_data)):
+        if i == 0:
+            dgamma = (gamma_data[i+1] - gamma_data[i])/2
+            gamma_1, gamma_2 = gamma_data[i]-dgamma, gamma_data[i]+dgamma
+            gamma_min, gamma_max = min(gamma_1, gamma_2), max(gamma_1, gamma_2)
+        elif i == len(gamma_data)-1:
+            dgamma = (gamma_data[i] - gamma_data[i-1])/2
+            gamma_1, gamma_2 = gamma_data[i]-dgamma, gamma_data[i]+dgamma
+            gamma_min, gamma_max = min(gamma_1, gamma_2), max(gamma_1, gamma_2)
+        else:
+            dgamma_min = (gamma_data[i] - gamma_data[i-1])/2
+            dgamma_max = (gamma_data[i+1] - gamma_data[i])/2
+            gamma_1, gamma_2 = gamma_data[i]-dgamma_min, gamma_data[i]+dgamma_max
+            gamma_min, gamma_max = min(gamma_1, gamma_2), max(gamma_1, gamma_2)
+        arg_in = np.where((gamma>gamma_min) & (gamma<gamma_max))[0]
+        N_data.append(len(arg_in))
+        N_pred.append(len(arg_in) * 500/10000)
+        r_sigma.append(np.std(r_stream_data[arg_in]))
+    N_data = np.array(N_data)
+    N_pred = np.array(N_pred)
+    r_sigma = np.array(r_sigma)#/np.sqrt(N_data)
+
+    x_data = r_data * np.cos(theta_data)
+    y_data = r_data * np.sin(theta_data)
+
+    dict_data = {'theta': theta_data,
+                'r': r_data,
+                'r_sigma': r_sigma,
+                'x': x_data,
+                'y': y_data}
+    
+    return dict_data, params_data
+
 if __name__ == "__main__":
     # Hyperparameters
     ndim  = 16
-    sigma = 2
     n_eff = 10000
     nlive = 100
+    N_data = 20
 
-    # Data
-    params_data = np.array([12, 15, 0.9, 0.8, 8, 1, -40, 0, 0, 0, 150, 0, 2, 0.5, 0.2, 0.7])
-    _, xy_track_data = model(params_data, N_stars=10000, Nbody=True, seed=False)
+    # Get Data
+    dict_data, params_data = get_data(ndim, N_data, seed=False)
 
-    r_track_data = np.sqrt(xy_track_data[0]**2 + xy_track_data[1]**2)
-    r_track_data += np.random.normal(0, sigma, len(r_track_data))
-    theta_track_data = np.unwrap(np.arctan2(xy_track_data[1], xy_track_data[0]))
-
-    x_data = r_track_data * np.cos(theta_track_data)
-    y_data = r_track_data * np.sin(theta_track_data)
-
-    dict_data = {'theta':theta_track_data,
-                 'r': r_track_data,
-                 'sigma': sigma,
-                 'x': x_data,
-                 'y': y_data}
     
     # # Run and Save Dynesty
     # nworkers = os.cpu_count()
@@ -184,16 +265,41 @@ if __name__ == "__main__":
     # results = sampler.results
 
     for i in range(10):
-        params = prior_transform(np.random.rand(ndim))
-        xy_stream_model, xy_track_model = model(params, Nbody=False)
-    
+        params = params_data #prior_transform(np.random.rand(ndim))
+        _, xy_track_model, _, _ = model(params, Nbody=True, seed=True)
+        r_model     = np.sqrt(xy_track_model[0]**2 + xy_track_model[1]**2)
+        theta_model = np.arctan2(xy_track_model[1], xy_track_model[0])
+        r_model, theta_model, _ = unwrap(r_model, theta_model, None)
+        
         plt.figure(figsize=(10, 5))
-        plt.scatter(dict_data['x'], dict_data['y'], color='b', label='Noisy Data track')
-        plt.plot(xy_track_model[0], xy_track_model[1], c='r', label='Model track')
+        plt.subplot(1,2,1)
+        plt.xlabel('x [kpc]')
+        plt.ylabel('y [kpc]')
+        x_data = dict_data['x']
+        y_data = dict_data['y']
+        theta_data = dict_data['theta']
+        r_sigma = dict_data['r_sigma']
+        x_sigma = abs(r_sigma*np.cos(theta_data))
+        y_sigma = abs(r_sigma*np.sin(theta_data))
+        for i in range(len(theta_data)):
+            xerr = r_sigma[i] * np.cos(theta_data[i])
+            yerr = r_sigma[i] * np.sin(theta_data[i])
+            plt.plot([x_data[i] - xerr, x_data[i] + xerr], [y_data[i] - yerr, y_data[i] + yerr], 'lime')
+        plt.scatter(x_data, y_data, c='lime')
+
+        plt.scatter(dict_data['x'], dict_data['y'], color='lime', label='Data')
+        plt.plot(xy_track_model[0], xy_track_model[1], c='r', label='Model')
         plt.title(log_likelihood_MSE(params, dict_data))
+
+        plt.subplot(1,2,2)
+        plt.xlabel('Theta [rad]')
+        plt.ylabel('r [kpc]')
+        plt.plot(theta_model, r_model, c='r', label='Model')
+        plt.errorbar(theta_data, dict_data['r'], yerr=dict_data['r_sigma'], fmt='o', color='lime', label='Data')
         plt.legend(loc='best')
         plt.show()
 
-        
+
+
 
 

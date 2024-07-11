@@ -131,7 +131,7 @@ def Agama_stream(logM, Rs, p, q, logm, rs, x0, y0, z0, vx0, vy0, vz0, tend, rot_
     xy_track[0]  = x_spline(gamma_fit)
     xy_track[1]  = y_spline(gamma_fit)
 
-    return xy_stream, xy_track
+    return xy_stream, xy_track, gamma, gamma_fit
 
 def scale_to_unit_interval(x):
     return (2 * x - (x.max() + x.min())) / (x.max() - x.min())
