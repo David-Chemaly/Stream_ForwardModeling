@@ -35,7 +35,7 @@ from gala.units import galactic
 
 from Agama_stream import Agama_stream
 
-BAD_VAL = -1e50
+BAD_VAL = 1e50
 
 ### Unwrap function ###
 def unwrap(r, theta, gamma):
@@ -120,7 +120,7 @@ def get_rot_mat(x1, x2, x3):
 
     return M
 
-def log_likelihood_MSE(params, dict_data):
+def log_likelihood_MSE(params, dict_data, threshold=1.25):
 
     # Generate model predictions for the given parameters
     _, xy_model, _, _ = model(params)
@@ -131,11 +131,17 @@ def log_likelihood_MSE(params, dict_data):
     f = interp1d(theta_model, r_model, kind='cubic', bounds_error=False, fill_value=np.nan)
     r_fit = f(dict_data['theta'])
 
+    # Punish for too long
+    dtheta_data  = abs(dict_data['theta'].max() - dict_data['theta'].min())
+    dtheta_model = abs(theta_model.max() - theta_model.min())
+    ratio = dtheta_model / dtheta_data
+    too_long = ratio > threshold
+    
+    # Punish for too short
+    arg_keep = ~np.isnan(r_fit)
     N_nan = np.sum(np.isnan(r_fit))
-    if N_nan > 0:
-        logl = BAD_VAL * N_nan
-    else:
-        logl = -0.5*np.sum( (dict_data['r'] - r_fit)**2/dict_data['r_sigma']**2 + np.log(dict_data['r_sigma']**2) )
+
+    logl = -0.5*np.sum( (dict_data['r'][arg_keep] - r_fit[arg_keep])**2/dict_data['r_sigma'][arg_keep]**2 + np.log(dict_data['r_sigma'][arg_keep]**2) ) - BAD_VAL *  N_nan - BAD_VAL * too_long * ratio
 
     return logl
 
@@ -157,7 +163,7 @@ def model(params, N_track=100, N_stars=500, Nbody=True, seed=True):
                         t_end, rot_mat, 
                         N_track=N_track, N_stars=N_stars, Nbody=Nbody, seed=seed)
     
-def get_data(ndim, N_data=20, seed=False, min_length=10, max_length=100, min_theta=np.pi/2, max_theta=5*np.pi/2):
+def get_data(ndim, N_data=20, seed=False, mean_p=None, mean_q=None, std_p=None, std_q=None, min_length=10, max_length=100, min_theta=np.pi/2, max_theta=5*np.pi/2):
 
     d_length = 0
     theta_length = 0
@@ -165,10 +171,19 @@ def get_data(ndim, N_data=20, seed=False, min_length=10, max_length=100, min_the
     while d_length < min_length or theta_length < min_theta or max_length < d_length or max_theta < theta_length or np.any( np.diff(theta_track_data) < 0): 
 
         if seed:
-            params_data = np.array([12, 15, 0.9, 0.8, 8, 1, -40, 0, 0, 0, 150, 0, 2, 0.5, 0.2, 0.7])
+            params_data = np.array([12, 15, 0.9, 0.8, 8, 2, -40, 0, 0, 0, 150, 0, 2, 0.5, 0.2, 0.7])
+
         else:
             p = np.random.uniform(0, 1, ndim)
-            params_data = prior_transform(p)
+            params_data = np.array(prior_transform(p))
+            if mean_p!=None or mean_q!=None:
+                if std_p==None or std_q==None:
+                    params_data[2] = mean_p
+                    params_data[3] = mean_q
+                else: 
+                    params_data[2] = np.random.normal(mean_p, std_p)
+                    params_data[3] = np.random.normal(mean_q, std_q)
+
 
         xy_stream_data, xy_track_data, gamma, gamma_track = model(params_data, N_stars=500, Nbody=False, seed=False)
         r_stream_data = np.sqrt(xy_stream_data[0]**2 + xy_stream_data[1]**2)
@@ -237,13 +252,13 @@ def get_data(ndim, N_data=20, seed=False, min_length=10, max_length=100, min_the
 
 if __name__ == "__main__":
     # Hyperparameters
-    ndim  = 16
-    n_eff = 10000
-    nlive = 100
+    ndim   = 16
+    n_eff  = 10000
+    nlive  = 100
     N_data = 20
 
     # Get Data
-    dict_data, params_data = get_data(ndim, N_data, seed=False)
+    dict_data, params_data = get_data(ndim, N_data, seed=True)
 
     
     # # Run and Save Dynesty
@@ -272,6 +287,7 @@ if __name__ == "__main__":
         r_model, theta_model, _ = unwrap(r_model, theta_model, None)
         
         plt.figure(figsize=(10, 5))
+
         plt.subplot(1,2,1)
         plt.xlabel('x [kpc]')
         plt.ylabel('y [kpc]')

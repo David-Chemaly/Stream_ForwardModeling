@@ -165,16 +165,16 @@ if __name__ == '__main__':
     logm, rs = 8., 1.  
 
     x0, y0, z0 = -40., 0., 0.  
-    vx0, vy0, vz0 = 0., 150., 0. 
+    vx0, vy0, vz0 = 0., 100., 0. 
 
-    tend = 2. # Gyr
+    tend = 5. # Gyr
 
     rot_mat = np.identity(3)
-    rot_mat[0, 1] = 2
+    # rot_mat[0, 1] = 2
 
     # Call the function
     time0 = timer.time()
-    xy_stream, xy_track = Agama_stream(logM, Rs, p, q, logm ,rs, x0, y0, z0, vx0, vy0, vz0, tend, rot_mat, N_stars=500, Nbody=False, seed=True)
+    xy_stream, xy_track, _, _ = Agama_stream(logM, Rs, p, q, logm ,rs, x0, y0, z0, vx0, vy0, vz0, tend, rot_mat, N_stars=500, Nbody=False, seed=True)
     time1 = timer.time()
 
     plt.title('Time taken: {:.2f} s'.format(time1 - time0))

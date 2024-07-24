@@ -12,17 +12,8 @@ def compute_densitynorm(M, Rs, p, q):
     densitynorm = M / C
     return densitynorm
 
-def orbitDF(pot_host, ic, time, timestart, trajsize, mass):
-    # integrate the orbit of a massive particle in the host galaxy, accounting for dynamical friction
-    if mass == 0:
-        return agama.orbit(ic=ic, potential=pot_host, time=time, timestart=timestart, trajsize=trajsize)
-    times = numpy.linspace(timestart, timestart+time, trajsize)
-    traj = scipy.integrate.odeint(
-        lambda xv, t: numpy.hstack((xv[3:6], pot_host.force(xv[0:3], t=t))),
-        ic, times)
-    return times, traj
 
-def Spray_stream(logM, Rs, q1, q2, q3, logm, rs, x0, y0, z0, vx0, vy0, vz0, tend, rot_mat, N_data=100, N_stars=10000, plot=False):
+def Spray_stream(logM, Rs, q1, q2, q3, logm, rs, x0, y0, z0, vx0, vy0, vz0, tend, rot_mat):
     # Compute densitynorm
     densitynorm = compute_densitynorm(10**logM, Rs, q2/q3, q1/q3)
 
@@ -32,21 +23,12 @@ def Spray_stream(logM, Rs, q1, q2, q3, logm, rs, x0, y0, z0, vx0, vy0, vz0, tend
 
     # Set satellite potential
     pot_sat  = agama.Potential(type='Plummer',  mass=10**logm, scaleradius=rs)
-    initmass = pot_sat.totalMass()
-
-    # Sample stars from satellite density distribution
-    df_sat = agama.DistributionFunction(type='quasispherical', potential=pot_sat)
-    xv, _ = agama.GalaxyModel(pot_sat, df_sat).sample(N_stars)
 
     # initial displacement
     r_center = numpy.array([x0, y0, z0, vx0, vy0, vz0])
     xv += r_center
 
-    # create a spherical isotropic DF for the satellite and sample it with particles
-    df_sat = agama.DistributionFunction(type='quasispherical', potential=pot_sat)
-    Nbody = 10000
-    xv, mass = agama.GalaxyModel(pot_sat, df_sat).sample(Nbody)
-
+    
 
     # parameters for the simulation
     tupd = 1**-3 # interval for plotting and updating the satellite mass for the restricted N-body simulation
