@@ -108,18 +108,54 @@ def log_likelihood_MSE(params, dict_data):
     if overlap != 0:
         logl = -SUPER_BAD_VAL * overlap
 
-    else: 
-        f = interp1d(theta_model, r_model, kind='cubic', bounds_error=False, fill_value=np.nan)
-        r_fit = f(dict_data['theta'])
+    # else: 
+    #     f = interp1d(theta_model, r_model, kind='cubic', bounds_error=False, fill_value=np.nan)
+    #     r_fit = f(dict_data['theta'])
 
-        # Punish for too short
-        N_nan = np.sum(np.isnan(r_fit))
+    #     # Punish for too short
+    #     N_nan = np.sum(np.isnan(r_fit))
 
-        if N_nan > 0:
-            logl = -BAD_VAL *  N_nan
-        else:
+    #     if N_nan > 0:
+    #         logl = -BAD_VAL *  N_nan
+    #     else:
+    #         logl = -0.5*np.sum( (dict_data['r'] - r_fit)**2/dict_data['r_sigma']**2 + np.log(dict_data['r_sigma']**2) )
+
+    else:
+        min_m_ang = theta_model.min()
+        max_m_ang = theta_model.max()
+        d_ang = (dict_data['theta'] + 10 * np.pi - min_m_ang) % (2 * np.pi) + min_m_ang
+        # min_model min_data max_data max_model
+        # how it should be
+        if (theta_model.min() < dict_data['theta'].min()) & (theta_model.max() > dict_data['theta'].max()):
+            f = interp1d(theta_model, r_model, kind='cubic', bounds_error=False, fill_value=np.nan)
+            r_fit = f(dict_data['theta'])
+
             logl = -0.5*np.sum( (dict_data['r'] - r_fit)**2/dict_data['r_sigma']**2 + np.log(dict_data['r_sigma']**2) )
 
+        else:
+            logl = -BAD_VAL
+            # penalty = max((np.maximum(d_ang, min_m_ang) - min_m_ang)**2)
+            # penalty += max((np.minimum(d_ang, max_m_ang) - max_m_ang)**2)
+            # logl = logl - np.abs(BAD_VAL) / 10000 * penalty
+
+        # theta_model_min = theta_model.min()
+        # theta_model_max = theta_model.max()
+        # d_ang = (dict_data['theta'] + 10 * np.pi - theta_model_min) % (2 * np.pi) + theta_model_min
+
+        # if ((d_ang > theta_model_min) & (d_ang < theta_model_max)).all():
+        #     #penalty = max(d_ang.min() - theta_model_min - 0.1, 0)**2 + max(theta_model_max - d_ang.max() - 0.1, 0)**2
+        #     II      = CubicSpline(theta_model, r_model)
+        #     f = interp1d(theta_model, r_model, kind='cubic', bounds_error=False, fill_value=np.nan)
+        #     logl = -0.5*np.sum( (dict_data['r'] - f(d_ang))**2/dict_data['r_sigma']**2)# + np.log(dict_data['r_sigma']**2) )
+
+        #     # logl  = -.5 * np.sum(((f(dict_data['theta']) - dict_data['r']) / dict_data['r_sigma'])**2) #- 10 * penalty
+
+        # else:
+        #     logl = BAD_VAL
+        #     # penalty = max((np.maximum(d_ang, theta_model_min) - theta_model_min)**2)
+        #     # penalty += max((np.minimum(d_ang, theta_model_max) - theta_model_max)**2)
+        #     # logl = logl - np.abs(BAD_VAL) / 10000 * penalty
+            
     return logl
 
 def model(params, dt=0.001):
@@ -223,20 +259,9 @@ if __name__ == "__main__":
     # Get Data
     dict_data, params_data = get_data_orbit(ndim, p_flat, 'distance', sigma=sigma, N_data=N_data)
 
-    if not os.path.exists(save_directory):
-        os.makedirs(save_directory)
-        
-    # Save True parameters
-    params_file = os.path.join(save_directory, 'true_params.txt')
-    np.savetxt(params_file, params_data)
-
-    # Save the dictionary of data to a pickle file within the directory
-    data_file = os.path.join(save_directory, 'data_dict.pkl')
-    with open(data_file, 'wb') as file:
-        pickle.dump(dict_data, file)
-
     # Run and Save Dynesty
     nworkers = os.cpu_count()
+    print(nworkers)
     pool     = Pool(nworkers)
     sampler = dynesty.DynamicNestedSampler(log_likelihood_MSE,
                                            prior_transform, 
@@ -251,95 +276,3 @@ if __name__ == "__main__":
     pool.close()
     pool.join()
     results = sampler.results
-
-    # Save Dynesty results to a pickle file within the directory
-    results_file = os.path.join(save_directory, 'dynesty_results.pkl')
-    with open(results_file, 'wb') as file:
-        pickle.dump(results, file)
-
-    # Plot a subset of parameters
-    labels = [r'logM$_{halo}$', r'R$_s$', 
-              'p', 
-              r'x$_0$', r'y$_0$', r'z$_0$', 
-              r'v$_x$', r'v$_y$', r'v$_z$', 
-              'time', 
-              r'k$_1$', r'k$_2$', r'k$_3$' ]
-
-    # Plot the posteriors
-    fig, axes = dyplot.cornerplot(results, 
-                                  color='blue',
-                                  truths=params_data, 
-                                  truth_color='lime',
-                                  labels=labels, 
-                                  max_n_ticks=5,
-                                  show_titles=True)
-    plt.savefig(f'{save_directory}/posteriors.png')
-
-    # Plot the best fit
-
-    # Extract weighted samples
-    samples = results.samples
-    weights = np.exp(results.logwt - results.logz[-1])
-
-    # Compute the weighted mean of the samples
-    mean_fit_params = np.sum(samples * weights.reshape(-1, 1), axis=0) / np.sum(weights)
-
-    # Compute the maximum log-likelihood
-    max_logl_index = np.argmax(results.logl)
-    max_logl_sample = results.samples[max_logl_index]
-    max_logl_value = results.logl[max_logl_index]
-
-    # Save MAP parameters
-    np.savetxt(os.path.join(save_directory, 'MAP_params.txt'), max_logl_sample)
-
-    max_fit  = model(max_logl_sample)
-    theo_fit = model(params_data)
-
-    x_data, y_data = dict_data['x'], dict_data['y']
-
-    # Plot the best fit
-    plt.figure(figsize=(15,5))
-    plt.subplot(1,2,1)
-    plt.xlabel('x [kpc]')
-    plt.ylabel('y [kpc]')
-    plt.title(f'MAP: {log_likelihood_MSE(max_logl_sample, dict_data)}')    
-    x_data = dict_data['x']
-    y_data = dict_data['y']
-    theta_data = dict_data['theta']
-    r_sigma = dict_data['r_sigma']
-    x_sigma = abs(r_sigma*np.cos(theta_data))
-    y_sigma = abs(r_sigma*np.sin(theta_data))
-    for i in range(len(theta_data)):
-        xerr = r_sigma[i] * np.cos(theta_data[i])
-        yerr = r_sigma[i] * np.sin(theta_data[i])
-        plt.plot([x_data[i] - xerr, x_data[i] + xerr], [y_data[i] - yerr, y_data[i] + yerr], 'lime')
-    plt.scatter(x_data, y_data, c='lime')
-    plt.plot(max_fit[0], max_fit[1], 'b')
-    plt.scatter(0,0, c='k', s=100)
-    plt.subplot(1,2,2)
-    plt.title(f'True: {log_likelihood_MSE(params_data, dict_data)}')
-    for i in range(len(theta_data)):
-        xerr = r_sigma[i] * np.cos(theta_data[i])
-        yerr = r_sigma[i] * np.sin(theta_data[i])
-        plt.plot([x_data[i] - xerr, x_data[i] + xerr], [y_data[i] - yerr, y_data[i] + yerr], 'lime')
-    plt.scatter(x_data, y_data, c='lime')    
-    plt.plot(theo_fit[0], theo_fit[1], 'b')
-    plt.scatter(0,0, c='k', s=100)
-
-    plt.xlabel(r'x [kpc]')
-    plt.ylabel(r'y [kpc]')
-    plt.savefig(f'{save_directory}/best_fit.png')
-
-    # Plot flattening
-    p_samples = results['samples'][:, 2].T
-
-    plt.figure(figsize=(15,5))
-    plt.xlabel('p')
-    plt.ylabel('Counts')
-    plt.hist(p_samples, bins=100, color='b')
-    plt.axvline(np.mean(p_samples), c='k')
-    plt.axvline(np.mean(p_samples)-np.std(p_samples), c='k',linestyle='--')
-    plt.axvline(np.mean(p_samples)+np.std(p_samples), c='k',linestyle='--')
-    plt.axvline(params_data[2], c='lime')
-
-    plt.savefig(f'{save_directory}/flattening_posteriors.png')
