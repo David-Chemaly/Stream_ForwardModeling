@@ -61,7 +61,7 @@ def model_orbit_gala(params, n_steps=int(1e2)):
     pot = gp.NFWPotential(10**logM, Rs, 1, 1, q, R=mat, units=units)
 
     orbit = pot.integrate_orbit(w0,
-                                dt=t_end / n_steps * auni.Myr,
+                                dt=t_end / n_steps * auni.Gyr,
                                 n_steps=n_steps)
     xout, yout, _ = orbit.x.to_value(auni.kpc), orbit.y.to_value(
         auni.kpc), orbit.z.to_value(auni.kpc)

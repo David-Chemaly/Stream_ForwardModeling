@@ -16,7 +16,7 @@ def prior_transform_ndim12(p):
         scipy.special.ndtri(_) * 100 for _ in [0.5 + x0/2, z0]
     ]
     vx1, vy1, vz1 = [
-        scipy.special.ndtri(_) * 100 for _ in [vx0, vy0/2, vz0]
+        scipy.special.ndtri(_) * 100 for _ in [vx0, 0.5 + vy0/2, vz0]
     ]
 
     t_end1 = 1.5*t_end

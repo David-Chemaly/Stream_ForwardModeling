@@ -6,8 +6,6 @@ import agama
 # working units: 1 Msun, 1 kpc, 1 km/s
 agama.setUnits(length=1, velocity=1, mass=1)
 
-from orbit_get_projected import model_orbit
-from orbit_get_prior import prior_transform_ndim12
 
 def get_data_model(xy_stream, sigma=1, n_ang=18):
     # Get the data
@@ -61,16 +59,16 @@ def CubicSpline_fit(theta, r, n_ang=18):
 
         return cs
     
-def get_data_prior(q_true, ndim, seed=42, sigma=1, n_ang=18):
+def get_data_prior(fct_prior, fct_model, q_true, ndim, seed=42, sigma=1, n_ang=18):
     rng = np.random.RandomState(seed)
 
     correct = False
     while not correct:
         p = rng.uniform(size=ndim)
-        params = np.array( prior_transform_ndim12(p) )
+        params = np.array( fct_prior(p) )
         params[2] = q_true
 
-        xy_stream = model_orbit(params)
+        xy_stream = fct_model(params)
 
         dict_data = get_data_model(xy_stream, sigma=sigma, n_ang=n_ang)
 

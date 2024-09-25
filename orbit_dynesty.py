@@ -8,7 +8,7 @@ import dynesty.utils as dyut
 
 import numpy as np
 
-from orbit_get_likelihood import log_likelihood
+from orbit_get_likelihood import log_likelihood_agama
 from orbit_get_prior import prior_transform_ndim12
 
 
@@ -16,7 +16,7 @@ def fit_one_parallele(data, ndim, nlive):
 
     nthreads = os.cpu_count()
     with mp.Pool(nthreads) as poo:
-        dns = dynesty.DynamicNestedSampler(log_likelihood,
+        dns = dynesty.DynamicNestedSampler(log_likelihood_agama,
                                         prior_transform_ndim12,
                                         ndim,
                                         logl_args=(data, ),
@@ -42,7 +42,7 @@ def fit_one_parallele(data, ndim, nlive):
 
 def fit_one(data, ndim, nlive):
 
-    dns = dynesty.DynamicNestedSampler(log_likelihood,
+    dns = dynesty.DynamicNestedSampler(log_likelihood_agama,
                                     prior_transform_ndim12,
                                     ndim,
                                     logl_args=(data, ),

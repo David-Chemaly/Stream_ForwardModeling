@@ -5,7 +5,7 @@ import numpy as np
 
 from orbit_get_data import get_data_prior
 from orbit_dynesty import fit_one
-from orbit_get_likelihood import log_likelihood
+from orbit_get_likelihood import log_likelihood_agama
 
 
 def run_in_parallel(q_true, seed, ndim, nlive, dir_save, sigma, N):
@@ -27,7 +27,7 @@ def run_in_parallel(q_true, seed, ndim, nlive, dir_save, sigma, N):
 def main(id, seed, q_true, ndim, nlive, sigma, dir_save):
 
     dict_data, params_data = get_data_prior(q_true, ndim, seed=seed, sigma=sigma)
-    print(log_likelihood(params_data, dict_data))
+    print(log_likelihood_agama(params_data, dict_data))
 
     # Save dict_result as a pickle file
     save_stream = f'{dir_save}/xx_{id+1:03d}'
