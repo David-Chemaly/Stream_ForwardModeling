@@ -17,29 +17,27 @@ def prior_transform_data(p):
 
     logM1  = (11 + 2*logM)
     Rs1    = (5 + 20*Rs)
-    q1     = q
+    q1     = 0.4 + 0.6*q
     dirx1, diry1, dirz1 = [
         scipy.special.ndtri(_) for _ in [dirx, diry, dirz]
     ]
 
-    logm1 = (6 + 2*logm) - 4
+    logm1 = (6 + 2*logm) 
     rs1   = (1 + 2*rs)
 
     x1, y1, z1 = [
         scipy.special.ndtri(_) * 100 for _ in [x0, y0, z0]
     ]
-    x1 = abs(x1)
-    y1 = 0
-    z1 = 0
+    # x1 = -abs(x1)
+    # y1 = 0
 
     vx1, vy1, vz1 = [
         scipy.special.ndtri(_) * 100 for _ in [vx0, vy0, vz0]
     ]
-    vz1 = 0
-    vy1 = abs(vy1) + 50
-    vz1 = 0
+    # vx1 = 0
+    # vz1 = 0
 
-    t_end1 = 8 + t_end
+    t_end1 = 4 + t_end
 
     return [logM1, Rs1, q1, dirx1, diry1, dirz1, 
             logm1, rs1,
@@ -52,30 +50,43 @@ def get_data_stream(q_true, seed=42, n_ang=18, ndim=15):
 
     while not correct:
         p = rng.uniform(size=ndim)
-        params = prior_transform_data(p)
+        params = np.array(prior_transform_data(p))
         params[2] = q_true
 
+        r = (np.sum(params[8:11]**2))**.5
         units = [auni.kpc, auni.km / auni.s, auni.Msun, auni.Gyr, auni.rad]
         mat = get_mat(params[3], params[4], params[5])
         pot = gp.NFWPotential(10**params[0], params[1], 1, 1, params[2], R=mat, units=units)
 
-        radius = np.sqrt( np.sum(np.array(params[-7:-4])**2))
-        f_vc   = np.sqrt( np.sum(np.array(params[-4:-1])**2))/pot.circular_velocity(params[-7:-4]).value
+        f_v = (np.sum(params[11:14]**2))**.5 / pot.circular_velocity(params[8:11]).item().value
 
-        print(radius, f_vc)
+        # logM  = 11 + 2 * rng.uniform(0, 1) 
+        # Rs    =  5 + 20 * rng.uniform(0, 1)
+        # q     = q_true
+        # dirx, diry, dirz = [rng.uniform(0, 1) for _ in range(3)]
 
-        if (radius > 20) & (radius < 80) & (f_vc > 0.7) & (f_vc < 2.):
+        # logm, rs = 7, 1
+        # r0 = 20 + 60 * rng.uniform(0, 1)
+
+        # units = [auni.kpc, auni.km / auni.s, auni.Msun, auni.Gyr, auni.rad]
+        # mat = get_mat(dirx, diry, dirz)
+        # pot = gp.NFWPotential(10**logM, Rs, 1, 1, q, R=mat, units=units)
+
+        # v_c = pot.circular_velocity([-r0, 0, 0]).item().value
+
+        # params = np.array([logM, Rs, q, dirx, diry, dirz, logm, rs, -r0, 0, 0, 0, v_c, 0, 4])
+        
+        if (r > 20) & (r < 100) & (f_v > 0.4) & (f_v < 0.7):
             xy_stream = model_stream(params)
             
             dict_data = get_track(xy_stream, n_ang=n_ang)
-            print(len(dict_data['theta']))
             if (len(dict_data['theta']) > n_ang//4):
-                if dict_data['theta'].max() < 7*np.pi/4:
+                if dict_data['theta'].max() < 6*np.pi/4:
                     correct = True
 
     return dict_data, params
 
-def get_track(xy_stream, n_ang=144):
+def get_track(xy_stream, n_ang=144, min_star=10):
     NN = len(xy_stream)
 
     x = xy_stream[:, 0]
@@ -94,7 +105,7 @@ def get_track(xy_stream, n_ang=144):
     for i in range(n_ang-1):
         idx = np.where((theta >= theta_bin[i]) & (theta < theta_bin[i+1]))[0]
 
-        if len(idx) > 10:
+        if len(idx) > min_star:
             r_in = r[idx]
 
             theta_data.append((theta_bin[i] + theta_bin[i+1])/2)
@@ -112,7 +123,7 @@ def get_track(xy_stream, n_ang=144):
 
     return dict_data
 
-def model_stream(params, dt=10):
+def model_stream(params, dt=-10):
     logM, Rs, q, dirx, diry, dirz, \
     logm, rs, \
     pos_init_x, pos_init_y, pos_init_z, \
@@ -134,12 +145,10 @@ def model_stream(params, dt=10):
 
     df = ms.FardalStreamDF(gala_modified=True)
 
-    gen = ms.MockStreamGenerator(df, H)
-
-    prog_pot = gp.PlummerPotential(m=logm, b=rs, units=units)
+    prog_pot = gp.PlummerPotential(m=10**logm, b=rs, units=units)
     gen = ms.MockStreamGenerator(df, H, progenitor_potential=prog_pot)
 
-    stream, _ = gen.run(w0, logm * auni.Msun, dt=dt* auni.Myr, n_steps=int(t_end * auni.Gyr/ abs(dt* auni.Myr)))
+    stream, _ = gen.run(w0, 10**logm * auni.Msun, dt=dt* auni.Myr, n_steps=int(t_end * auni.Gyr/ abs(dt* auni.Myr)))
     xy_stream = stream.xyz.T[:, :2]
 
     return xy_stream.value
