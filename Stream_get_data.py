@@ -81,7 +81,7 @@ def get_data_stream(q_true, seed=42, n_ang=18, ndim=15):
             
             dict_data = get_track(xy_stream, n_ang=n_ang)
             if (len(dict_data['theta']) > n_ang//4):
-                if dict_data['theta'].max() < 6*np.pi/4:
+                if (dict_data['theta'].min() > np.pi/4) & (dict_data['theta'].max() < 6*np.pi/4) & (np.diff( dict_data['theta'] ) < 1).all():
                     correct = True
 
     return dict_data, params
